@@ -11,6 +11,11 @@ class LoopScene extends Phaser.Scene {
     this.currentEventId = "start";
     this.currentEvent = null;
     this.choiceNodes = [];
+    this.choiceContainer = null;
+    this.choiceMask = null;
+    this.choiceScrollY = 0;
+    this.choiceContentHeight = 0;
+    this.choiceViewportHeight = 0;
     this.isTyping = false;
   }
 
@@ -229,6 +234,27 @@ class LoopScene extends Phaser.Scene {
       fontSize: "18px",
       color: "#e5ca8b"
     });
+
+    this.choiceViewportHeight = 118;
+    this.choiceContainer = this.add.container(28, 662);
+
+    const maskShape = this.make.graphics({ x: 0, y: 0, add: false });
+    maskShape.fillStyle(0xffffff, 1);
+    maskShape.fillRect(28, 662, 376, this.choiceViewportHeight);
+    this.choiceMask = maskShape.createGeometryMask();
+    this.choiceContainer.setMask(this.choiceMask);
+
+    this.input.on("wheel", (pointer, gameObjects, deltaX, deltaY) => {
+      if (this.choiceContentHeight > this.choiceViewportHeight) {
+        this.scrollChoices(deltaY * 0.8);
+      }
+    });
+
+    this.input.on("pointermove", (pointer) => {
+      if (pointer.isDown && this.choiceContentHeight > this.choiceViewportHeight) {
+        this.scrollChoices(-pointer.velocity.y / 10);
+      }
+    });
   }
 
   beginLife() {
@@ -298,18 +324,22 @@ class LoopScene extends Phaser.Scene {
   clearChoices() {
     this.choiceNodes.forEach((node) => node.destroy());
     this.choiceNodes = [];
+    this.choiceScrollY = 0;
+    this.choiceContentHeight = 0;
+    if (this.choiceContainer) {
+      this.choiceContainer.y = 662;
+    }
   }
 
   showChoices(choices) {
-    const startY = 662;
-    const spacing = 48;
+    let offsetY = 0;
 
     choices.forEach((choice, index) => {
       const available = this.canChoose(choice);
       const label = available ? choice.text : `${choice.text} [need ${this.formatRequirement(choice.req)}]`;
       const color = available ? "#9bf6b1" : "#f29191";
 
-      const button = this.add.text(28, startY + index * spacing, label, {
+      const button = this.add.text(0, offsetY, label, {
         fontFamily: '"Courier New", monospace',
         fontSize: "18px",
         color,
@@ -327,8 +357,13 @@ class LoopScene extends Phaser.Scene {
         button.setAlpha(0.88);
       }
 
+      this.choiceContainer.add(button);
       this.choiceNodes.push(button);
+      offsetY += button.height + 10;
     });
+
+    this.choiceContentHeight = Math.max(0, offsetY - 10);
+    this.applyChoiceScroll();
   }
 
   showDeathChoice() {
@@ -341,7 +376,7 @@ class LoopScene extends Phaser.Scene {
 
     this.storyText.setText(`${this.currentEvent.text}${summary}`);
 
-    const button = this.add.text(28, 690, "Begin the next life", {
+    const button = this.add.text(0, 0, "Begin the next life", {
       fontFamily: '"Courier New", monospace',
       fontSize: "19px",
       color: "#9bf6b1",
@@ -353,7 +388,10 @@ class LoopScene extends Phaser.Scene {
     button.on("pointerover", () => button.setBackgroundColor("#304630"));
     button.on("pointerout", () => button.setBackgroundColor("#223122"));
     button.on("pointerdown", () => this.reincarnate());
+    this.choiceContainer.add(button);
     this.choiceNodes.push(button);
+    this.choiceContentHeight = button.height;
+    this.applyChoiceScroll();
   }
 
   formatRequirement(req) {
@@ -406,6 +444,25 @@ class LoopScene extends Phaser.Scene {
     this.lifeNumber += 1;
     this.saveProgress();
     this.beginLife();
+  }
+
+  getMaxChoiceScroll() {
+    return Math.max(0, this.choiceContentHeight - this.choiceViewportHeight);
+  }
+
+  scrollChoices(delta) {
+    this.choiceScrollY = Phaser.Math.Clamp(
+      this.choiceScrollY + delta,
+      0,
+      this.getMaxChoiceScroll()
+    );
+    this.applyChoiceScroll();
+  }
+
+  applyChoiceScroll() {
+    if (this.choiceContainer) {
+      this.choiceContainer.y = 662 - this.choiceScrollY;
+    }
   }
 }
 
