@@ -18,6 +18,7 @@ const CHOICE_WHEEL_SPEED = 0.9;
 const TYPEWRITER_DELAY = 12;
 const HERO_FLOAT_OFFSET = 7;
 const HERO_FLOAT_DURATION = 2200;
+const HERO_BASE_SCALE = 0.65;
 const VIEW_FADE_DURATION = 220;
 const CHOICE_TRANSITION_DELAY = 140;
 const REINCARNATE_DELAY = 520;
@@ -94,7 +95,7 @@ class LoopScene extends Phaser.Scene {
   loadVisualAssets() {
     return Promise.all([
       this.loadImageTexture("bg-scene", "bg.webp"),
-      this.loadImageTexture("hero-portrait", "character.webp")
+      this.loadImageTexture("hero-portrait", "character_50.webp")
     ]);
   }
 
@@ -163,6 +164,9 @@ class LoopScene extends Phaser.Scene {
     this.heroHalo = this.add.ellipse(0, 0, 100, 100, 0xd6d8ff, 0.12);
     this.heroGlow = this.add.ellipse(0, 0, 100, 40, 0x000000, 0.18);
     this.hero = this.add.image(0, 0, "hero-portrait").setOrigin(0.5, 1);
+    this.hero.setDepth(2);
+    this.heroHalo.setDepth(1);
+    this.heroGlow.setDepth(1);
   }
 
   createHeaderObjects() {
@@ -184,12 +188,15 @@ class LoopScene extends Phaser.Scene {
     this.storyPanelShadow = this.add.rectangle(0, 0, 100, 100, 0x000000, 0.18);
     this.storyPanel = this.add.rectangle(0, 0, 100, 100, 0x14111d, 0.94);
     this.storyPanel.setStrokeStyle(1, 0xffffff, 0.07);
+    this.storyPanelShadow.setDepth(20);
+    this.storyPanel.setDepth(21);
 
     this.storyText = this.createText(0, 0, "", {
       fontFamily: STORY_FONT_STACK,
       color: "#f7f3ea",
       lineSpacing: 8
     });
+    this.storyText.setDepth(22);
   }
 
   createChoiceObjects() {
@@ -197,10 +204,12 @@ class LoopScene extends Phaser.Scene {
       fontFamily: UI_FONT_STACK,
       color: "#bba978"
     });
+    this.choiceHint.setDepth(22);
 
     this.divider = this.add.rectangle(0, 0, 100, 1, 0xffffff, 0.08).setOrigin(0, 0.5);
+    this.divider.setDepth(22);
     this.choiceContainer = this.add.container(0, 0);
-    this.choiceContainer.setDepth(10);
+    this.choiceContainer.setDepth(24);
 
     this.choiceMaskGraphics = this.make.graphics({ x: 0, y: 0, add: false });
     this.choiceMask = this.choiceMaskGraphics.createGeometryMask();
@@ -443,24 +452,24 @@ class LoopScene extends Phaser.Scene {
       choicesY,
       choicesHeight,
       heroCenterX: width / 2,
-      heroCenterY: heroAreaTop + heroAreaHeight * 0.8,
-      heroHeight: Phaser.Math.Clamp(heroAreaHeight * 0.95, 160, 410),
+      heroCenterY: heroAreaTop + heroAreaHeight * 0.92,
+      heroScale: HERO_BASE_SCALE,
       heroHaloWidth: Phaser.Math.Clamp(width * 0.48, 160, 260),
       heroHaloHeight: Phaser.Math.Clamp(heroAreaHeight * 0.8, 150, 340)
     };
   }
 
   layoutHero() {
-    const { heroCenterX, heroCenterY, heroHeight, heroHaloWidth, heroHaloHeight, heroShadowWidth, heroShadowHeight } = this.ui;
+    const { heroCenterX, heroCenterY, heroScale, heroHaloWidth, heroHaloHeight, heroShadowWidth, heroShadowHeight } = this.ui;
 
-    this.heroHalo.setPosition(this.round(heroCenterX), this.round(heroCenterY - heroHeight * 0.45));
+    this.heroHalo.setPosition(this.round(heroCenterX), this.round(heroCenterY - this.hero.displayHeight * 0.38));
     this.heroHalo.setSize(heroHaloWidth, heroHaloHeight);
 
     this.heroGlow.setPosition(this.round(heroCenterX), this.round(heroCenterY + 8));
     this.heroGlow.setSize(heroShadowWidth, heroShadowHeight);
 
     this.hero.setPosition(this.round(heroCenterX), this.round(heroCenterY));
-    this.hero.setScale(heroHeight / this.hero.height);
+    this.hero.setScale(heroScale);
   }
 
   layoutHeader() {
