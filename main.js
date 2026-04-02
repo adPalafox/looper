@@ -1,4 +1,5 @@
 const STORAGE_KEY = "rekindled-loop-save";
+const IS_FILE_PROTOCOL = window.location.protocol === "file:";
 
 class LoopScene extends Phaser.Scene {
   constructor() {
@@ -19,21 +20,67 @@ class LoopScene extends Phaser.Scene {
     this.ui = {};
   }
 
-  preload() {
-    this.load.image("bg-scene", "bg.webp");
-    this.load.image("hero-portrait", "character.webp");
-  }
+  preload() {}
 
   create() {
-    this.loadProgress();
-    this.createObjects();
-    this.bindInput();
-    this.scale.on("resize", this.handleResize, this);
-    this.handleResize(this.scale.gameSize);
-    this.beginLife();
+    this.showLoadingState();
+    this.loadVisualAssets()
+      .then(() => {
+        this.loadingText.destroy();
+        this.loadProgress();
+        this.createObjects();
+        this.bindInput();
+        this.scale.on("resize", this.handleResize, this);
+        this.handleResize(this.scale.gameSize);
+        this.beginLife();
+      })
+      .catch(() => {
+        this.loadingText.setText(
+          "Unable to load bg.webp or character.webp.\nIf you opened this with file://, run a local server\nor refresh after the files finish loading."
+        );
+      });
   }
 
   update() {}
+
+  showLoadingState() {
+    const { width, height } = this.scale.gameSize;
+    this.add.rectangle(width / 2, height / 2, width, height, 0x111019, 1);
+    this.loadingText = this.add.text(width / 2, height / 2, "Loading artwork...", {
+      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontSize: "18px",
+      color: "#f4ecda",
+      align: "center"
+    }).setOrigin(0.5);
+  }
+
+  loadVisualAssets() {
+    return Promise.all([
+      this.loadImageTexture("bg-scene", "bg.webp"),
+      this.loadImageTexture("hero-portrait", "character.webp")
+    ]);
+  }
+
+  loadImageTexture(key, path) {
+    if (this.textures.exists(key)) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => {
+        if (this.textures.exists(key)) {
+          this.textures.remove(key);
+        }
+        this.textures.addImage(key, image);
+        resolve();
+      };
+      image.onerror = () => {
+        reject(new Error(`Failed to load ${path}`));
+      };
+      image.src = new URL(path, window.location.href).href;
+    });
+  }
 
   loadProgress() {
     try {
@@ -531,7 +578,7 @@ class LoopScene extends Phaser.Scene {
 }
 
 const config = {
-  type: Phaser.AUTO,
+  type: IS_FILE_PROTOCOL ? Phaser.CANVAS : Phaser.AUTO,
   parent: "game-container",
   backgroundColor: "#111019",
   antialias: true,
