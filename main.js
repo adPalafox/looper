@@ -160,6 +160,7 @@ class LoopScene extends Phaser.Scene {
     this.divider = this.add.rectangle(0, 0, 100, 1, 0xffffff, 0.08).setOrigin(0, 0.5);
 
     this.choiceContainer = this.add.container(0, 0);
+    this.choiceContainer.setDepth(10);
     this.choiceMaskGraphics = this.make.graphics({ x: 0, y: 0, add: false });
     this.choiceMask = this.choiceMaskGraphics.createGeometryMask();
     this.choiceContainer.setMask(this.choiceMask);
@@ -250,9 +251,9 @@ class LoopScene extends Phaser.Scene {
       storyWidth: panelWidth - panelPadding * 2,
       storyHeight: Phaser.Math.Clamp(panelHeight * 0.36, 100, 170),
       choicesX: marginX + panelPadding,
-      choicesY: panelTop + panelPadding + Phaser.Math.Clamp(panelHeight * 0.36, 100, 170) + 52,
+      choicesY: panelTop + panelPadding + Phaser.Math.Clamp(panelHeight * 0.36, 100, 170) + 56,
       choicesWidth: panelWidth - panelPadding * 2,
-      choicesHeight: panelHeight - Phaser.Math.Clamp(panelHeight * 0.36, 100, 170) - panelPadding * 2 - 58,
+      choicesHeight: panelHeight - Phaser.Math.Clamp(panelHeight * 0.36, 100, 170) - panelPadding * 2 - 64,
       heroCenterX: width / 2,
       heroCenterY: heroAreaTop + heroAreaHeight * 0.58,
       heroScale: Math.max(3, Math.round(Phaser.Math.Clamp(width / 92, 3, 5))),
@@ -368,7 +369,8 @@ class LoopScene extends Phaser.Scene {
     this.storyText.setFixedSize(storyWidth, storyHeight);
 
     this.choiceHint.setPosition(marginX + panelPadding, panelTop + panelPadding + storyHeight + 16);
-    this.choiceHint.setFontSize(baseFont * 0.9);
+    this.choiceHint.setFontSize(baseFont * 0.8);
+    this.choiceHint.setLetterSpacing(1.2);
 
     this.divider.setPosition(marginX + panelPadding, panelTop + panelPadding + storyHeight + 44);
     this.divider.width = storyWidth;
@@ -475,54 +477,187 @@ class LoopScene extends Phaser.Scene {
     choices.forEach((choice) => {
       const available = this.canChoose(choice);
       const label = available ? choice.text : `${choice.text} [need ${this.formatRequirement(choice.req)}]`;
-
-      const button = this.add.text(0, offsetY, label, {
-        fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-        fontSize: `${this.ui.choiceFont}px`,
-        color: available ? "#f4f1e8" : "#a49cad",
-        backgroundColor: available ? "#24202d" : "#1a1720",
-        padding: { left: 14, right: 14, top: 12, bottom: 12 },
-        fixedWidth: this.ui.choicesWidth,
-        wordWrap: { width: this.ui.choicesWidth - 28, useAdvancedWrap: true }
+      const button = this.createChoiceCard({
+        y: offsetY,
+        title: label,
+        available,
+        actionLabel: available ? "Choose" : "Locked",
+        subtitle: available ? null : `Requires ${this.formatRequirement(choice.req)}`,
+        onPress: () => this.pickChoice(choice)
       });
-
-      if (available) {
-        button.setInteractive({ useHandCursor: true });
-        button.on("pointerover", () => button.setBackgroundColor("#2d2838"));
-        button.on("pointerout", () => button.setBackgroundColor("#24202d"));
-        button.on("pointerdown", () => this.pickChoice(choice));
-      } else {
-        button.setAlpha(0.84);
-      }
 
       this.choiceContainer.add(button);
       this.choiceNodes.push(button);
-      offsetY += button.height + 12;
+      offsetY += button.cardHeight + 14;
     });
 
-    this.choiceContentHeight = Math.max(0, offsetY - 12);
+    this.choiceContentHeight = Math.max(0, offsetY - 14);
     this.applyChoiceScroll();
   }
 
   showDeathChoice() {
-    const button = this.add.text(0, 0, "Begin the next life", {
-      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      fontSize: `${this.ui.choiceFont}px`,
-      color: "#f4f1e8",
-      backgroundColor: "#2b2332",
-      padding: { left: 14, right: 14, top: 14, bottom: 14 },
-      fixedWidth: this.ui.choicesWidth
+    const button = this.createChoiceCard({
+      y: 0,
+      title: "Begin the next life",
+      available: true,
+      actionLabel: "Reincarnate",
+      subtitle: "Carry your strongest fragments into another run.",
+      onPress: () => this.reincarnate()
     });
-
-    button.setInteractive({ useHandCursor: true });
-    button.on("pointerover", () => button.setBackgroundColor("#352b3d"));
-    button.on("pointerout", () => button.setBackgroundColor("#2b2332"));
-    button.on("pointerdown", () => this.reincarnate());
 
     this.choiceContainer.add(button);
     this.choiceNodes.push(button);
-    this.choiceContentHeight = button.height;
+    this.choiceContentHeight = button.cardHeight;
     this.applyChoiceScroll();
+  }
+
+  createChoiceCard({ y, title, available, actionLabel, subtitle, onPress }) {
+    const width = this.ui.choicesWidth;
+    const inset = 16;
+    const actionWidth = 82;
+    const titleWidth = width - inset * 2 - actionWidth - 10;
+    const titleText = this.add.text(inset, 14, title, {
+      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontSize: `${this.ui.choiceFont}px`,
+      fontStyle: "600",
+      color: available ? "#f6f2ea" : "#a69cab",
+      wordWrap: { width: titleWidth, useAdvancedWrap: true }
+    });
+
+    const subtitleText = subtitle
+      ? this.add.text(inset, titleText.y + titleText.height + 8, subtitle, {
+          fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          fontSize: `${Math.max(12, this.ui.choiceFont * 0.72)}px`,
+          color: available ? "#bdb4c5" : "#7f7587",
+          wordWrap: { width: width - inset * 2, useAdvancedWrap: true }
+        })
+      : null;
+
+    const contentBottom = subtitleText
+      ? subtitleText.y + subtitleText.height
+      : titleText.y + titleText.height;
+    const cardHeight = Math.max(72, contentBottom + 14);
+
+    const container = this.add.container(0, y);
+    const shadow = this.add.rectangle(0, 4, width, cardHeight, 0x000000, available ? 0.18 : 0.1)
+      .setOrigin(0, 0);
+    const card = this.add.rectangle(0, 0, width, cardHeight, available ? 0x24212d : 0x17141d, 1)
+      .setOrigin(0, 0);
+    card.setStrokeStyle(1, available ? 0x625472 : 0x3c3444, available ? 0.85 : 0.7);
+
+    const accent = this.add.rectangle(0, 0, 4, cardHeight, available ? 0xc49b62 : 0x574d59, 1)
+      .setOrigin(0, 0);
+
+    const actionPill = this.add.rectangle(width - actionWidth - inset, 14, actionWidth, 28, available ? 0x332c3f : 0x221d28, 1)
+      .setOrigin(0, 0);
+    actionPill.setStrokeStyle(1, available ? 0x7c688d : 0x4f4458, 0.9);
+
+    const actionText = this.add.text(actionPill.x + actionWidth / 2, actionPill.y + 14, actionLabel, {
+      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontSize: `${Math.max(11, this.ui.choiceFont * 0.66)}px`,
+      color: available ? "#efe4cf" : "#988e99"
+    }).setOrigin(0.5);
+    actionText.setLetterSpacing(0.8);
+
+    container.add([shadow, card, accent, actionPill, actionText, titleText]);
+    if (subtitleText) {
+      container.add(subtitleText);
+    }
+
+    const hitArea = this.add.zone(0, 0, width, cardHeight).setOrigin(0, 0);
+    if (available) {
+      hitArea.setInteractive({ useHandCursor: true });
+      hitArea.on("pointerover", () => this.setChoiceCardState(container, "hover"));
+      hitArea.on("pointerout", () => this.setChoiceCardState(container, "idle"));
+      hitArea.on("pointerdown", () => {
+        this.setChoiceCardState(container, "pressed");
+      });
+      hitArea.on("pointerup", () => {
+        this.setChoiceCardState(container, "hover");
+        onPress();
+      });
+    }
+
+    container.add(hitArea);
+    container.cardHeight = cardHeight;
+    container.stateParts = { shadow, card, accent, actionPill, actionText, titleText, subtitleText };
+    container.isAvailable = available;
+    this.setChoiceCardState(container, available ? "idle" : "locked");
+    return container;
+  }
+
+  setChoiceCardState(container, state) {
+    const { shadow, card, accent, actionPill, actionText, titleText, subtitleText } = container.stateParts;
+
+    if (!container.isAvailable || state === "locked") {
+      shadow.y = 2;
+      shadow.alpha = 0.1;
+      card.y = 0;
+      card.setFillStyle(0x17141d, 1);
+      card.setStrokeStyle(1, 0x3c3444, 0.7);
+      accent.setFillStyle(0x574d59, 1);
+      actionPill.setFillStyle(0x221d28, 1);
+      actionPill.setStrokeStyle(1, 0x4f4458, 0.9);
+      actionText.setColor("#988e99");
+      titleText.setColor("#a69cab");
+      if (subtitleText) {
+        subtitleText.setColor("#7f7587");
+      }
+      return;
+    }
+
+    if (state === "pressed") {
+      shadow.y = 1;
+      shadow.alpha = 0.14;
+      card.y = 2;
+      accent.y = 2;
+      actionPill.y = 16;
+      actionText.y = 30;
+      card.setFillStyle(0x2e2937, 1);
+      card.setStrokeStyle(1, 0xd2ae77, 0.95);
+      accent.setFillStyle(0xe2b777, 1);
+      actionPill.setFillStyle(0x413649, 1);
+      actionPill.setStrokeStyle(1, 0xe2b777, 0.95);
+      actionText.setColor("#fff5df");
+      return;
+    }
+
+    if (state === "hover") {
+      shadow.y = 3;
+      shadow.alpha = 0.22;
+      card.y = -1;
+      accent.y = -1;
+      actionPill.y = 13;
+      actionText.y = 27;
+      card.setFillStyle(0x2d2837, 1);
+      card.setStrokeStyle(1, 0xb99561, 0.95);
+      accent.setFillStyle(0xd4a96c, 1);
+      actionPill.setFillStyle(0x3a3244, 1);
+      actionPill.setStrokeStyle(1, 0x9b8460, 0.95);
+      actionText.setColor("#fff0d7");
+      titleText.setColor("#fff8ef");
+      if (subtitleText) {
+        subtitleText.setColor("#d0c7d8");
+      }
+      return;
+    }
+
+    shadow.y = 4;
+    shadow.alpha = 0.18;
+    card.y = 0;
+    accent.y = 0;
+    actionPill.y = 14;
+    actionText.y = 28;
+    card.setFillStyle(0x24212d, 1);
+    card.setStrokeStyle(1, 0x625472, 0.85);
+    accent.setFillStyle(0xc49b62, 1);
+    actionPill.setFillStyle(0x332c3f, 1);
+    actionPill.setStrokeStyle(1, 0x7c688d, 0.9);
+    actionText.setColor("#efe4cf");
+    titleText.setColor("#f6f2ea");
+    if (subtitleText) {
+      subtitleText.setColor("#bdb4c5");
+    }
   }
 
   formatRequirement(req) {
