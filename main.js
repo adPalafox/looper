@@ -1,6 +1,5 @@
 const STORAGE_KEY = "rekindled-loop-save";
 const IS_FILE_PROTOCOL = window.location.protocol === "file:";
-const TEXT_RESOLUTION = Math.max(2, Math.ceil(window.devicePixelRatio || 1));
 const UI_FONT_STACK = '"Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif';
 const STORY_FONT_STACK = '"Baskerville", "Iowan Old Style", Georgia, serif';
 
@@ -67,6 +66,18 @@ const IMPORTANT_FLAG_TEXT = Object.freeze({
   earned_true_ending: "You discovered the true ending."
 });
 
+function getAdaptiveTextResolution(width = window.innerWidth, devicePixelRatio = window.devicePixelRatio || 1) {
+  if (width <= 480) {
+    return 1;
+  }
+
+  if (width <= 768) {
+    return Math.min(1.25, Math.max(1, devicePixelRatio));
+  }
+
+  return Math.min(2, Math.max(1.25, devicePixelRatio));
+}
+
 class LoopScene extends Phaser.Scene {
   constructor() {
     super({ key: "LoopScene" });
@@ -115,6 +126,7 @@ class LoopScene extends Phaser.Scene {
     this.isTyping = false;
     this.isTransitioning = false;
     this.ui = {};
+    this.textNodes = [];
     this.runFlags = {};
     this.currentLifeTraitUnlocks = [];
     this.currentLifeDiscoveries = [];
@@ -374,6 +386,7 @@ class LoopScene extends Phaser.Scene {
     const metrics = this.buildResponsiveMetrics(gameSize);
     this.cameras.main.setViewport(0, 0, metrics.width, metrics.height);
     this.ui = metrics;
+    this.updateTextResolution(metrics.width);
 
     this.drawBackground();
     this.layoutScene(this.getCurrentNarrativeText());
@@ -1333,8 +1346,21 @@ class LoopScene extends Phaser.Scene {
 
   createText(x, y, value, style) {
     const text = this.add.text(x, y, value, style);
-    text.setResolution(TEXT_RESOLUTION);
+    text.setResolution(getAdaptiveTextResolution(this.scale.gameSize.width));
+    this.textNodes.push(text);
     return text;
+  }
+
+  updateTextResolution(width) {
+    const resolution = getAdaptiveTextResolution(width);
+    this.textNodes.forEach((text) => {
+      if (!text || !text.scene) {
+        return;
+      }
+
+      text.setResolution(resolution);
+      text.updateText();
+    });
   }
 
   animateNarrativeEntrance() {
