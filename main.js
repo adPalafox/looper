@@ -129,7 +129,7 @@ class LoopScene extends Phaser.Scene {
     this.heroGlow = this.add.ellipse(0, 0, 100, 40, 0x000000, 0.18);
     this.hero = this.add.sprite(0, 0, "hero-0").play("hero-idle");
 
-    this.headerPanel = this.add.rectangle(0, 0, 100, 50, 0x120f1c, 0.76);
+    this.headerPanel = this.add.rectangle(0, 0, 100, 50, 0x121019, 0.72);
     this.headerPanel.setStrokeStyle(1, 0xffffff, 0.06);
 
     this.lifeText = this.add.text(0, 0, "", {
@@ -147,12 +147,12 @@ class LoopScene extends Phaser.Scene {
     this.storyPanel.setStrokeStyle(1, 0xffffff, 0.07);
 
     this.storyText = this.add.text(0, 0, "", {
-      fontFamily: 'Georgia, "Times New Roman", serif',
+      fontFamily: '"Iowan Old Style", Georgia, "Times New Roman", serif',
       color: "#f7f3ea",
       lineSpacing: 8
     });
 
-    this.choiceHint = this.add.text(0, 0, "Choose your path", {
+    this.choiceHint = this.add.text(0, 0, "Decision", {
       fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       color: "#bba978"
     });
@@ -227,7 +227,7 @@ class LoopScene extends Phaser.Scene {
     const panelWidth = width - marginX * 2;
     const panelHeight = Phaser.Math.Clamp(height * 0.45, 300, height * 0.54);
     const panelTop = height - safeBottom - panelHeight;
-    const panelPadding = Phaser.Math.Clamp(panelWidth * 0.055, 18, 26);
+    const panelPadding = Phaser.Math.Clamp(panelWidth * 0.065, 20, 30);
     const heroAreaTop = safeTop + headerHeight + 12;
     const heroAreaBottom = panelTop - 16;
     const heroAreaHeight = Math.max(120, heroAreaBottom - heroAreaTop);
@@ -248,11 +248,11 @@ class LoopScene extends Phaser.Scene {
       storyFont,
       choiceFont,
       storyWidth: panelWidth - panelPadding * 2,
-      storyHeight: Phaser.Math.Clamp(panelHeight * 0.36, 100, 170),
+      storyHeight: Phaser.Math.Clamp(panelHeight * 0.38, 110, 184),
       choicesX: marginX + panelPadding,
-      choicesY: panelTop + panelPadding + Phaser.Math.Clamp(panelHeight * 0.36, 100, 170) + 52,
+      choicesY: panelTop + panelPadding + Phaser.Math.Clamp(panelHeight * 0.38, 110, 184) + 56,
       choicesWidth: panelWidth - panelPadding * 2,
-      choicesHeight: panelHeight - Phaser.Math.Clamp(panelHeight * 0.36, 100, 170) - panelPadding * 2 - 58,
+      choicesHeight: panelHeight - Phaser.Math.Clamp(panelHeight * 0.38, 110, 184) - panelPadding * 2 - 64,
       heroCenterX: width / 2,
       heroCenterY: heroAreaTop + heroAreaHeight * 0.58,
       heroScale: Math.max(3, Math.round(Phaser.Math.Clamp(width / 92, 3, 5))),
@@ -364,13 +364,15 @@ class LoopScene extends Phaser.Scene {
 
     this.storyText.setPosition(marginX + panelPadding, panelTop + panelPadding);
     this.storyText.setFontSize(storyFont);
+    this.storyText.setLineSpacing(Math.round(storyFont * 0.44));
     this.storyText.setWordWrapWidth(storyWidth, true);
     this.storyText.setFixedSize(storyWidth, storyHeight);
 
     this.choiceHint.setPosition(marginX + panelPadding, panelTop + panelPadding + storyHeight + 16);
-    this.choiceHint.setFontSize(baseFont * 0.9);
+    this.choiceHint.setFontSize(baseFont * 0.74);
+    this.choiceHint.setAlpha(0.88);
 
-    this.divider.setPosition(marginX + panelPadding, panelTop + panelPadding + storyHeight + 44);
+    this.divider.setPosition(marginX + panelPadding, panelTop + panelPadding + storyHeight + 42);
     this.divider.width = storyWidth;
 
     this.choiceViewportHeight = Math.max(74, choicesHeight);
@@ -481,7 +483,7 @@ class LoopScene extends Phaser.Scene {
         fontSize: `${this.ui.choiceFont}px`,
         color: available ? "#f4f1e8" : "#a49cad",
         backgroundColor: available ? "#24202d" : "#1a1720",
-        padding: { left: 14, right: 14, top: 12, bottom: 12 },
+        padding: { left: 16, right: 16, top: 14, bottom: 14 },
         fixedWidth: this.ui.choicesWidth,
         wordWrap: { width: this.ui.choicesWidth - 28, useAdvancedWrap: true }
       });
@@ -497,10 +499,10 @@ class LoopScene extends Phaser.Scene {
 
       this.choiceContainer.add(button);
       this.choiceNodes.push(button);
-      offsetY += button.height + 12;
+      offsetY += button.height + 14;
     });
 
-    this.choiceContentHeight = Math.max(0, offsetY - 12);
+    this.choiceContentHeight = Math.max(0, offsetY - 14);
     this.applyChoiceScroll();
   }
 
@@ -510,7 +512,7 @@ class LoopScene extends Phaser.Scene {
       fontSize: `${this.ui.choiceFont}px`,
       color: "#f4f1e8",
       backgroundColor: "#2b2332",
-      padding: { left: 14, right: 14, top: 14, bottom: 14 },
+      padding: { left: 16, right: 16, top: 16, bottom: 16 },
       fixedWidth: this.ui.choicesWidth
     });
 
