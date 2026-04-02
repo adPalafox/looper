@@ -1,27 +1,28 @@
 const STORAGE_KEY = "rekindled-loop-save";
 const IS_FILE_PROTOCOL = window.location.protocol === "file:";
+const TEXT_RESOLUTION = Math.max(2, Math.ceil(window.devicePixelRatio || 1));
 const UI_FONT_STACK = '"Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif';
 const STORY_FONT_STACK = '"Baskerville", "Iowan Old Style", Georgia, serif';
-const TEXT_RESOLUTION = Math.max(2, Math.ceil(window.devicePixelRatio || 1));
+
+const DEFAULT_STATS = Object.freeze({ strength: 1, intellect: 1, charm: 1 });
+const LOAD_ERROR_TEXT = [
+  "Unable to load bg.webp or character.webp.",
+  "If you opened this with file://, run a local server",
+  "or refresh after the files finish loading."
+].join("\n");
+
+const CHOICE_GAP = 14;
+const CHOICE_DRAG_THRESHOLD = 8;
+const CHOICE_WHEEL_SPEED = 0.9;
+
+const TYPEWRITER_DELAY = 12;
+const HERO_FLOAT_OFFSET = 7;
+const HERO_FLOAT_DURATION = 2200;
 
 class LoopScene extends Phaser.Scene {
   constructor() {
     super({ key: "LoopScene" });
-    this.baseStats = { strength: 1, intellect: 1, charm: 1 };
-    this.currentStats = { strength: 1, intellect: 1, charm: 1 };
-    this.lifeNumber = 1;
-    this.currentEvent = null;
-    this.choiceNodes = [];
-    this.choiceScrollY = 0;
-    this.choiceContentHeight = 0;
-    this.choiceViewportHeight = 0;
-    this.isTyping = false;
-    this.isDraggingChoices = false;
-    this.choicePointerDown = false;
-    this.activeChoicePointerId = null;
-    this.lastDragY = 0;
-    this.dragStartY = 0;
-    this.ui = {};
+    this.initializeState();
   }
 
   preload() {}
@@ -29,34 +30,54 @@ class LoopScene extends Phaser.Scene {
   create() {
     this.showLoadingState();
     this.loadVisualAssets()
-      .then(() => {
-        this.loadingText.destroy();
-        this.loadProgress();
-        this.createObjects();
-        this.bindInput();
-        this.scale.on("resize", this.handleResize, this);
-        this.handleResize(this.scale.gameSize);
-        this.beginLife();
-      })
+      .then(() => this.bootstrapScene())
       .catch(() => {
-        this.loadingText.setText(
-          "Unable to load bg.webp or character.webp.\nIf you opened this with file://, run a local server\nor refresh after the files finish loading."
-        );
+        this.loadingText.setText(LOAD_ERROR_TEXT);
       });
   }
 
   update() {}
 
+  initializeState() {
+    this.baseStats = { ...DEFAULT_STATS };
+    this.currentStats = { ...DEFAULT_STATS };
+    this.lifeNumber = 1;
+    this.currentEvent = null;
+    this.typeEvent = null;
+
+    this.choiceNodes = [];
+    this.choiceScrollY = 0;
+    this.choiceContentHeight = 0;
+    this.choiceViewportHeight = 0;
+    this.choicePointerDown = false;
+    this.isDraggingChoices = false;
+    this.activeChoicePointerId = null;
+    this.lastDragY = 0;
+    this.dragStartY = 0;
+
+    this.isTyping = false;
+    this.ui = {};
+  }
+
+  bootstrapScene() {
+    this.loadingText.destroy();
+    this.loadProgress();
+    this.createObjects();
+    this.bindInput();
+    this.scale.on("resize", this.handleResize, this);
+    this.handleResize(this.scale.gameSize);
+    this.beginLife();
+  }
+
   showLoadingState() {
     const { width, height } = this.scale.gameSize;
     this.add.rectangle(width / 2, height / 2, width, height, 0x111019, 1);
-    this.loadingText = this.add.text(width / 2, height / 2, "Loading artwork...", {
+    this.loadingText = this.createText(width / 2, height / 2, "Loading artwork...", {
       fontFamily: UI_FONT_STACK,
       fontSize: "18px",
       color: "#f4ecda",
       align: "center"
     }).setOrigin(0.5);
-    this.loadingText.setResolution(TEXT_RESOLUTION);
   }
 
   loadVisualAssets() {
@@ -80,9 +101,7 @@ class LoopScene extends Phaser.Scene {
         this.textures.addImage(key, image);
         resolve();
       };
-      image.onerror = () => {
-        reject(new Error(`Failed to load ${path}`));
-      };
+      image.onerror = () => reject(new Error(`Failed to load ${path}`));
       image.src = new URL(path, window.location.href).href;
     });
   }
@@ -95,15 +114,11 @@ class LoopScene extends Phaser.Scene {
       }
 
       const save = JSON.parse(raw);
-      if (save && save.baseStats) {
-        this.baseStats = {
-          strength: Math.max(1, save.baseStats.strength || 1),
-          intellect: Math.max(1, save.baseStats.intellect || 1),
-          charm: Math.max(1, save.baseStats.charm || 1)
-        };
+      if (save?.baseStats) {
+        this.baseStats = this.normalizeStats(save.baseStats);
       }
 
-      if (save && Number.isInteger(save.lifeNumber) && save.lifeNumber > 0) {
+      if (Number.isInteger(save?.lifeNumber) && save.lifeNumber > 0) {
         this.lifeNumber = save.lifeNumber;
       }
     } catch {
@@ -122,123 +137,145 @@ class LoopScene extends Phaser.Scene {
   }
 
   createObjects() {
+    this.createBackgroundObjects();
+    this.createHeaderObjects();
+    this.createStoryObjects();
+    this.createChoiceObjects();
+    this.createAmbientTweens();
+  }
+
+  createBackgroundObjects() {
     this.background = this.add.image(0, 0, "bg-scene").setOrigin(0.5);
     this.backgroundShade = this.add.graphics();
     this.vignette = this.add.graphics();
     this.heroHalo = this.add.ellipse(0, 0, 100, 100, 0xd6d8ff, 0.12);
     this.heroGlow = this.add.ellipse(0, 0, 100, 40, 0x000000, 0.18);
     this.hero = this.add.image(0, 0, "hero-portrait").setOrigin(0.5, 1);
+  }
 
+  createHeaderObjects() {
     this.headerPanel = this.add.rectangle(0, 0, 100, 50, 0x121019, 0.72);
     this.headerPanel.setStrokeStyle(1, 0xffffff, 0.06);
 
-    this.lifeText = this.add.text(0, 0, "", {
+    this.lifeText = this.createText(0, 0, "", {
       fontFamily: UI_FONT_STACK,
       color: "#f4ecda"
     });
-    this.lifeText.setResolution(TEXT_RESOLUTION);
 
-    this.statText = this.add.text(0, 0, "", {
+    this.statText = this.createText(0, 0, "", {
       fontFamily: UI_FONT_STACK,
       color: "#c8cfdf"
     });
-    this.statText.setResolution(TEXT_RESOLUTION);
+  }
 
+  createStoryObjects() {
     this.storyPanelShadow = this.add.rectangle(0, 0, 100, 100, 0x000000, 0.18);
     this.storyPanel = this.add.rectangle(0, 0, 100, 100, 0x14111d, 0.94);
     this.storyPanel.setStrokeStyle(1, 0xffffff, 0.07);
 
-    this.storyText = this.add.text(0, 0, "", {
+    this.storyText = this.createText(0, 0, "", {
       fontFamily: STORY_FONT_STACK,
       color: "#f7f3ea",
       lineSpacing: 8
     });
-    this.storyText.setResolution(TEXT_RESOLUTION);
+  }
 
-    this.choiceHint = this.add.text(0, 0, "DECISIONS", {
+  createChoiceObjects() {
+    this.choiceHint = this.createText(0, 0, "DECISIONS", {
       fontFamily: UI_FONT_STACK,
       color: "#bba978"
     });
-    this.choiceHint.setResolution(TEXT_RESOLUTION);
 
     this.divider = this.add.rectangle(0, 0, 100, 1, 0xffffff, 0.08).setOrigin(0, 0.5);
-
     this.choiceContainer = this.add.container(0, 0);
     this.choiceContainer.setDepth(10);
+
     this.choiceMaskGraphics = this.make.graphics({ x: 0, y: 0, add: false });
     this.choiceMask = this.choiceMaskGraphics.createGeometryMask();
     this.choiceContainer.setMask(this.choiceMask);
+  }
 
+  createAmbientTweens() {
     this.tweens.add({
       targets: [this.hero, this.heroHalo],
-      y: "+=7",
-      duration: 2200,
+      y: `+=${HERO_FLOAT_OFFSET}`,
+      duration: HERO_FLOAT_DURATION,
       yoyo: true,
       repeat: -1,
       ease: "Sine.easeInOut"
     });
-
   }
 
   bindInput() {
-    this.input.on("wheel", (pointer, gameObjects, deltaX, deltaY) => {
-      if (
-        this.choiceContentHeight > this.choiceViewportHeight &&
-        this.isPointInChoiceViewport(pointer.x, pointer.y)
-      ) {
-        this.scrollChoices(deltaY * 0.9);
-      }
-    });
+    this.input.on("wheel", this.handleChoiceWheel, this);
+    this.input.on("pointerdown", this.handleChoicePointerDown, this);
+    this.input.on("pointermove", this.handleChoicePointerMove, this);
+    this.input.on("pointerup", this.resetChoicePointerState, this);
+    this.input.on("pointerupoutside", this.resetChoicePointerState, this);
+  }
 
-    this.input.on("pointerdown", (pointer) => {
-      if (
-        pointer.leftButtonDown() &&
-        this.isPointInChoiceViewport(pointer.x, pointer.y) &&
-        this.choiceContentHeight > this.choiceViewportHeight
-      ) {
-        this.choicePointerDown = true;
-        this.activeChoicePointerId = pointer.id;
-        this.lastDragY = pointer.y;
-        this.dragStartY = pointer.y;
-      }
-    });
+  handleChoiceWheel(pointer, gameObjects, deltaX, deltaY) {
+    if (!this.canScrollChoices() || !this.isPointInChoiceViewport(pointer.x, pointer.y)) {
+      return;
+    }
 
-    this.input.on("pointermove", (pointer) => {
-      if (
-        !this.choicePointerDown ||
-        this.activeChoicePointerId !== pointer.id ||
-        !pointer.isDown
-      ) {
-        return;
-      }
+    this.scrollChoices(deltaY * CHOICE_WHEEL_SPEED);
+  }
 
-      if (!this.isDraggingChoices && Math.abs(pointer.y - this.dragStartY) > 8) {
-        this.isDraggingChoices = true;
-      }
+  handleChoicePointerDown(pointer) {
+    if (!pointer.leftButtonDown() || !this.canStartChoiceDrag(pointer)) {
+      return;
+    }
 
-      if (!this.isDraggingChoices) {
-        return;
-      }
+    this.choicePointerDown = true;
+    this.activeChoicePointerId = pointer.id;
+    this.lastDragY = pointer.y;
+    this.dragStartY = pointer.y;
+  }
 
-      const delta = this.lastDragY - pointer.y;
-      this.lastDragY = pointer.y;
-      this.scrollChoices(delta);
-    });
+  handleChoicePointerMove(pointer) {
+    if (!this.isTrackedChoicePointer(pointer)) {
+      return;
+    }
 
-    this.input.on("pointerup", () => {
-      this.resetChoicePointerState();
-    });
+    if (!this.isDraggingChoices && Math.abs(pointer.y - this.dragStartY) > CHOICE_DRAG_THRESHOLD) {
+      this.isDraggingChoices = true;
+    }
 
-    this.input.on("pointerupoutside", () => {
-      this.resetChoicePointerState();
-    });
+    if (!this.isDraggingChoices) {
+      return;
+    }
+
+    const delta = this.lastDragY - pointer.y;
+    this.lastDragY = pointer.y;
+    this.scrollChoices(delta);
+  }
+
+  canStartChoiceDrag(pointer) {
+    return this.canScrollChoices() && this.isPointInChoiceViewport(pointer.x, pointer.y);
+  }
+
+  isTrackedChoicePointer(pointer) {
+    return this.choicePointerDown && this.activeChoicePointerId === pointer.id && pointer.isDown;
+  }
+
+  canScrollChoices() {
+    return this.choiceContentHeight > this.choiceViewportHeight;
   }
 
   handleResize(gameSize) {
+    const metrics = this.buildResponsiveMetrics(gameSize);
+    this.cameras.main.setViewport(0, 0, metrics.width, metrics.height);
+    this.ui = metrics;
+
+    this.drawBackground();
+    this.layoutScene(this.getCurrentNarrativeText());
+    this.refreshCurrentView(true);
+  }
+
+  buildResponsiveMetrics(gameSize) {
     const width = Math.round(gameSize.width);
     const height = Math.round(gameSize.height);
-    this.cameras.main.setViewport(0, 0, width, height);
-
     const marginX = Phaser.Math.Clamp(width * 0.055, 18, 32);
     const safeTop = Phaser.Math.Clamp(height * 0.04, 20, 38);
     const safeBottom = Phaser.Math.Clamp(height * 0.025, 16, 28);
@@ -265,7 +302,7 @@ class LoopScene extends Phaser.Scene {
       Math.max(350, minStoryHeight + minChoicesHeight + panelPadding * 2 + panelChromeHeight)
     );
 
-    this.ui = {
+    return {
       width,
       height,
       marginX,
@@ -291,10 +328,6 @@ class LoopScene extends Phaser.Scene {
       heroShadowWidth: Phaser.Math.Clamp(width * 0.34, 112, 190),
       heroShadowHeight: Phaser.Math.Clamp(height * 0.03, 18, 28)
     };
-
-    this.drawBackground();
-    this.layoutObjects(this.getCurrentNarrativeText());
-    this.refreshCurrentView(true);
   }
 
   drawBackground() {
@@ -304,8 +337,6 @@ class LoopScene extends Phaser.Scene {
     this.background.setScale(scale);
 
     this.backgroundShade.clear();
-    this.vignette.clear();
-
     this.backgroundShade.fillGradientStyle(0x0f0e16, 0x0f0e16, 0x18151f, 0x19141f, 0.12, 0.08, 0.28, 0.64);
     this.backgroundShade.fillRect(0, 0, width, height);
     this.backgroundShade.fillStyle(0xffffff, 0.04);
@@ -313,29 +344,31 @@ class LoopScene extends Phaser.Scene {
     this.backgroundShade.fillStyle(0xdcd8ff, 0.06);
     this.backgroundShade.fillEllipse(width * 0.5, height * 0.28, width * 0.48, height * 0.2);
 
+    this.vignette.clear();
     this.vignette.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0.14, 0.04, 0.18, 0.24);
     this.vignette.fillRect(0, 0, width, height);
   }
 
-  layoutObjects(storyContent = "") {
+  layoutScene(storyContent = "") {
+    const panelLayout = this.measurePanelLayout(storyContent);
+    Object.assign(this.ui, panelLayout);
+
+    this.layoutHero();
+    this.layoutHeader();
+    this.layoutStoryPanel();
+    this.layoutChoiceViewport();
+  }
+
+  measurePanelLayout(storyContent) {
     const {
       width,
       height,
-      marginX,
       safeTop,
       safeBottom,
       headerHeight,
-      panelWidth,
       panelPadding,
-      labelFont,
-      headerFont,
-      metaFont,
       storyFont,
       storyWidth,
-      choicesX,
-      choicesWidth,
-      heroShadowWidth,
-      heroShadowHeight,
       minStoryHeight,
       minChoicesHeight,
       panelChromeHeight,
@@ -363,82 +396,97 @@ class LoopScene extends Phaser.Scene {
     );
     const panelTop = height - safeBottom - panelHeight;
     const choicesY = panelTop + panelPadding + storyHeight + 56;
-    const choicesHeight = Math.max(minChoicesHeight, panelHeight - storyHeight - panelPadding * 2 - panelChromeHeight);
+    const choicesHeight = Math.max(
+      minChoicesHeight,
+      panelHeight - storyHeight - panelPadding * 2 - panelChromeHeight
+    );
+
     const heroAreaTop = safeTop + headerHeight + 12;
     const heroAreaBottom = panelTop - 16;
     const heroAreaHeight = Math.max(96, heroAreaBottom - heroAreaTop);
-    const heroCenterX = width / 2;
-    const heroCenterY = heroAreaTop + heroAreaHeight * 0.8;
-    const heroHeight = Phaser.Math.Clamp(heroAreaHeight * 0.95, 160, 410);
-    const heroHaloWidth = Phaser.Math.Clamp(width * 0.48, 160, 260);
-    const heroHaloHeight = Phaser.Math.Clamp(heroAreaHeight * 0.8, 150, 340);
 
-    Object.assign(this.ui, {
+    return {
       panelHeight,
       panelTop,
       storyHeight,
       choicesY,
       choicesHeight,
-      heroCenterX,
-      heroCenterY,
-      heroHeight,
-      heroHaloWidth,
-      heroHaloHeight
-    });
+      heroCenterX: width / 2,
+      heroCenterY: heroAreaTop + heroAreaHeight * 0.8,
+      heroHeight: Phaser.Math.Clamp(heroAreaHeight * 0.95, 160, 410),
+      heroHaloWidth: Phaser.Math.Clamp(width * 0.48, 160, 260),
+      heroHaloHeight: Phaser.Math.Clamp(heroAreaHeight * 0.8, 150, 340)
+    };
+  }
 
-    this.heroHalo.setPosition(Math.round(heroCenterX), Math.round(heroCenterY - heroHeight * 0.45));
+  layoutHero() {
+    const { heroCenterX, heroCenterY, heroHeight, heroHaloWidth, heroHaloHeight, heroShadowWidth, heroShadowHeight } = this.ui;
+
+    this.heroHalo.setPosition(this.round(heroCenterX), this.round(heroCenterY - heroHeight * 0.45));
     this.heroHalo.setSize(heroHaloWidth, heroHaloHeight);
 
-    this.heroGlow.setPosition(Math.round(heroCenterX), Math.round(heroCenterY + 8));
+    this.heroGlow.setPosition(this.round(heroCenterX), this.round(heroCenterY + 8));
     this.heroGlow.setSize(heroShadowWidth, heroShadowHeight);
 
-    this.hero.setPosition(Math.round(heroCenterX), Math.round(heroCenterY));
+    this.hero.setPosition(this.round(heroCenterX), this.round(heroCenterY));
     this.hero.setScale(heroHeight / this.hero.height);
+  }
 
-    this.headerPanel.setPosition(Math.round(width / 2), Math.round(safeTop + headerHeight / 2));
+  layoutHeader() {
+    const { width, safeTop, headerHeight, panelWidth, marginX, panelPadding, headerFont, metaFont } = this.ui;
+
+    this.headerPanel.setPosition(this.round(width / 2), this.round(safeTop + headerHeight / 2));
     this.headerPanel.setSize(panelWidth, headerHeight);
 
-    this.lifeText.setPosition(Math.round(marginX + panelPadding), Math.round(safeTop + 16));
+    this.lifeText.setPosition(this.round(marginX + panelPadding), this.round(safeTop + 16));
     this.lifeText.setFontSize(headerFont);
     this.lifeText.setColor("#f5ecdd");
 
-    this.statText.setPosition(Math.round(marginX + panelPadding), Math.round(safeTop + 18 + headerFont * 1.35));
+    this.statText.setPosition(this.round(marginX + panelPadding), this.round(safeTop + 18 + headerFont * 1.35));
     this.statText.setFontSize(metaFont);
     this.statText.setColor("#b6bdcf");
+  }
 
-    this.storyPanelShadow.setPosition(Math.round(width / 2), Math.round(panelTop + panelHeight / 2 + 8));
+  layoutStoryPanel() {
+    const { width, panelTop, panelHeight, panelWidth, marginX, panelPadding, storyWidth, storyHeight } = this.ui;
+
+    this.storyPanelShadow.setPosition(this.round(width / 2), this.round(panelTop + panelHeight / 2 + 8));
     this.storyPanelShadow.setSize(panelWidth, panelHeight);
 
-    this.storyPanel.setPosition(Math.round(width / 2), Math.round(panelTop + panelHeight / 2));
+    this.storyPanel.setPosition(this.round(width / 2), this.round(panelTop + panelHeight / 2));
     this.storyPanel.setSize(panelWidth, panelHeight);
 
-    this.storyText.setPosition(Math.round(marginX + panelPadding), Math.round(panelTop + panelPadding));
+    this.storyText.setPosition(this.round(marginX + panelPadding), this.round(panelTop + panelPadding));
     this.storyText.setFixedSize(storyWidth, storyHeight);
+  }
+
+  layoutChoiceViewport() {
+    const { marginX, panelPadding, panelTop, storyHeight, storyWidth, choicesX, choicesY, choicesWidth, labelFont, choicesHeight } = this.ui;
 
     this.choiceHint.setPosition(
-      Math.round(marginX + panelPadding),
-      Math.round(panelTop + panelPadding + storyHeight + 16)
+      this.round(marginX + panelPadding),
+      this.round(panelTop + panelPadding + storyHeight + 16)
     );
     this.choiceHint.setFontSize(labelFont);
     this.choiceHint.setAlpha(0.78);
     this.choiceHint.setLetterSpacing(2.4);
 
     this.divider.setPosition(
-      Math.round(marginX + panelPadding),
-      Math.round(panelTop + panelPadding + storyHeight + 42)
+      this.round(marginX + panelPadding),
+      this.round(panelTop + panelPadding + storyHeight + 42)
     );
     this.divider.width = storyWidth;
 
     this.choiceViewportHeight = Math.max(74, choicesHeight);
-    this.choiceContainer.setPosition(Math.round(choicesX), Math.round(choicesY));
+    this.choiceContainer.setPosition(this.round(choicesX), this.round(choicesY));
 
     this.choiceMaskGraphics.clear();
     this.choiceMaskGraphics.fillStyle(0xffffff, 1);
     this.choiceMaskGraphics.fillRect(
-      Math.round(choicesX),
-      Math.round(choicesY),
-      Math.round(choicesWidth),
-      Math.round(this.choiceViewportHeight)
+      this.round(choicesX),
+      this.round(choicesY),
+      this.round(choicesWidth),
+      this.round(this.choiceViewportHeight)
     );
   }
 
@@ -447,20 +495,13 @@ class LoopScene extends Phaser.Scene {
     this.showEvent("start");
   }
 
-  renderStats() {
-    this.lifeText.setText(`Life ${this.lifeNumber}`);
-    this.statText.setText(
-      `STR ${this.currentStats.strength}   INT ${this.currentStats.intellect}   CHA ${this.currentStats.charm}`
-    );
+  showEvent(eventId) {
+    this.currentEvent = this.getEventById(eventId);
+    this.refreshCurrentView(false);
   }
 
   getEventById(eventId) {
     return EVENTS.find((event) => event.id === eventId) || EVENTS[0];
-  }
-
-  showEvent(eventId) {
-    this.currentEvent = this.getEventById(eventId);
-    this.refreshCurrentView(false);
   }
 
   getCurrentNarrativeText() {
@@ -487,23 +528,26 @@ class LoopScene extends Phaser.Scene {
     }
 
     const narrativeText = this.getCurrentNarrativeText();
-    this.layoutObjects(narrativeText);
+    this.layoutScene(narrativeText);
     this.clearChoices();
     this.renderStats();
 
-    if (this.currentEvent.death) {
-      this.setStoryText(narrativeText, skipTyping, () => this.showDeathChoice());
-      return;
-    }
+    const onComplete = this.currentEvent.death
+      ? () => this.showDeathChoice()
+      : () => this.showChoices(this.currentEvent.choices);
 
-    this.setStoryText(narrativeText, skipTyping, () => this.showChoices(this.currentEvent.choices));
+    this.setStoryText(narrativeText, skipTyping, onComplete);
+  }
+
+  renderStats() {
+    this.lifeText.setText(`Life ${this.lifeNumber}`);
+    this.statText.setText(
+      `STR ${this.currentStats.strength}   INT ${this.currentStats.intellect}   CHA ${this.currentStats.charm}`
+    );
   }
 
   setStoryText(text, skipTyping, onComplete) {
-    if (this.typeEvent) {
-      this.typeEvent.remove(false);
-      this.typeEvent = null;
-    }
+    this.stopTyping();
 
     if (skipTyping) {
       this.isTyping = false;
@@ -519,19 +563,27 @@ class LoopScene extends Phaser.Scene {
     let index = 0;
 
     this.typeEvent = this.time.addEvent({
-      delay: 12,
+      delay: TYPEWRITER_DELAY,
       repeat: Math.max(text.length - 1, 0),
       callback: () => {
         index += 1;
         this.storyText.setText(text.slice(0, index));
         if (index >= text.length) {
           this.isTyping = false;
+          this.typeEvent = null;
           if (onComplete) {
             onComplete();
           }
         }
       }
     });
+  }
+
+  stopTyping() {
+    if (this.typeEvent) {
+      this.typeEvent.remove(false);
+      this.typeEvent = null;
+    }
   }
 
   clearChoices() {
@@ -548,10 +600,9 @@ class LoopScene extends Phaser.Scene {
 
     choices.forEach((choice) => {
       const available = this.canChoose(choice);
-      const label = available ? choice.text : `${choice.text} [need ${this.formatRequirement(choice.req)}]`;
       const button = this.createChoiceCard({
         y: offsetY,
-        title: label,
+        title: this.getChoiceLabel(choice, available),
         available,
         actionLabel: available ? "Choose" : "Locked",
         subtitle: available ? null : `Requires ${this.formatRequirement(choice.req)}`,
@@ -560,10 +611,10 @@ class LoopScene extends Phaser.Scene {
 
       this.choiceContainer.add(button);
       this.choiceNodes.push(button);
-      offsetY += button.cardHeight + 14;
+      offsetY += button.cardHeight + CHOICE_GAP;
     });
 
-    this.choiceContentHeight = Math.max(0, offsetY - 14);
+    this.choiceContentHeight = Math.max(0, offsetY - CHOICE_GAP);
     this.applyChoiceScroll();
   }
 
@@ -583,91 +634,137 @@ class LoopScene extends Phaser.Scene {
     this.applyChoiceScroll();
   }
 
+  getChoiceLabel(choice, available) {
+    if (available) {
+      return choice.text;
+    }
+
+    return `${choice.text} [need ${this.formatRequirement(choice.req)}]`;
+  }
+
   createChoiceCard({ y, title, available, actionLabel, subtitle, onPress }) {
+    const metrics = this.getChoiceCardMetrics();
+    const titleText = this.createChoiceTitle(metrics, title, available);
+    const subtitleText = this.createChoiceSubtitle(metrics, titleText, subtitle, available);
+    const cardHeight = this.getChoiceCardHeight(titleText, subtitleText);
+
+    const container = this.add.container(0, y);
+    const parts = this.createChoiceCardParts(metrics, cardHeight, available, actionLabel);
+    container.add([parts.shadow, parts.card, parts.accent, parts.actionPill, parts.actionText, titleText]);
+
+    if (subtitleText) {
+      container.add(subtitleText);
+    }
+
+    const hitArea = this.createChoiceHitArea(metrics.width, cardHeight, available, container, onPress);
+    container.add(hitArea);
+
+    container.cardHeight = cardHeight;
+    container.stateParts = { ...parts, titleText, subtitleText };
+    container.isAvailable = available;
+
+    this.setChoiceCardState(container, available ? "idle" : "locked");
+    return container;
+  }
+
+  getChoiceCardMetrics() {
     const width = this.ui.choicesWidth;
     const inset = 16;
     const actionWidth = 82;
-    const titleWidth = width - inset * 2 - actionWidth - 10;
-    const titleFontSize = this.ui.choiceFont;
-    const subtitleFontSize = this.ui.choiceMetaFont;
-    const titleText = this.add.text(inset, 14, title, {
+
+    return {
+      width,
+      inset,
+      actionWidth,
+      titleWidth: width - inset * 2 - actionWidth - 10,
+      titleFontSize: this.ui.choiceFont,
+      subtitleFontSize: this.ui.choiceMetaFont
+    };
+  }
+
+  createChoiceTitle(metrics, title, available) {
+    return this.createText(metrics.inset, 14, title, {
       fontFamily: UI_FONT_STACK,
-      fontSize: `${titleFontSize}px`,
+      fontSize: `${metrics.titleFontSize}px`,
       fontStyle: "bold",
       color: available ? "#f6f2ea" : "#a69cab",
-      wordWrap: { width: titleWidth, useAdvancedWrap: true }
+      wordWrap: { width: metrics.titleWidth, useAdvancedWrap: true }
     });
-    titleText.setResolution(TEXT_RESOLUTION);
+  }
 
-    const subtitleText = subtitle
-      ? this.add.text(inset, titleText.y + titleText.height + 8, subtitle, {
-          fontFamily: UI_FONT_STACK,
-          fontSize: `${subtitleFontSize}px`,
-          color: available ? "#bdb4c5" : "#7f7587",
-          wordWrap: { width: width - inset * 2, useAdvancedWrap: true }
-        })
-      : null;
-    if (subtitleText) {
-      subtitleText.setResolution(TEXT_RESOLUTION);
+  createChoiceSubtitle(metrics, titleText, subtitle, available) {
+    if (!subtitle) {
+      return null;
     }
 
+    return this.createText(metrics.inset, titleText.y + titleText.height + 8, subtitle, {
+      fontFamily: UI_FONT_STACK,
+      fontSize: `${metrics.subtitleFontSize}px`,
+      color: available ? "#bdb4c5" : "#7f7587",
+      wordWrap: { width: metrics.width - metrics.inset * 2, useAdvancedWrap: true }
+    });
+  }
+
+  getChoiceCardHeight(titleText, subtitleText) {
     const contentBottom = subtitleText
       ? subtitleText.y + subtitleText.height
       : titleText.y + titleText.height;
-    const cardHeight = Math.max(72, contentBottom + 14);
 
-    const container = this.add.container(0, y);
-    const shadow = this.add.rectangle(0, 4, width, cardHeight, 0x000000, available ? 0.18 : 0.1)
+    return Math.max(72, contentBottom + 14);
+  }
+
+  createChoiceCardParts(metrics, cardHeight, available, actionLabel) {
+    const shadow = this.add.rectangle(0, 4, metrics.width, cardHeight, 0x000000, available ? 0.18 : 0.1)
       .setOrigin(0, 0);
-    const card = this.add.rectangle(0, 0, width, cardHeight, available ? 0x24212d : 0x17141d, 1)
+    const card = this.add.rectangle(0, 0, metrics.width, cardHeight, available ? 0x24212d : 0x17141d, 1)
       .setOrigin(0, 0);
     card.setStrokeStyle(1, available ? 0x625472 : 0x3c3444, available ? 0.85 : 0.7);
 
     const accent = this.add.rectangle(0, 0, 4, cardHeight, available ? 0xc49b62 : 0x574d59, 1)
       .setOrigin(0, 0);
 
-    const actionPill = this.add.rectangle(width - actionWidth - inset, 14, actionWidth, 28, available ? 0x332c3f : 0x221d28, 1)
-      .setOrigin(0, 0);
+    const actionPill = this.add.rectangle(
+      metrics.width - metrics.actionWidth - metrics.inset,
+      14,
+      metrics.actionWidth,
+      28,
+      available ? 0x332c3f : 0x221d28,
+      1
+    ).setOrigin(0, 0);
     actionPill.setStrokeStyle(1, available ? 0x7c688d : 0x4f4458, 0.9);
 
-    const actionText = this.add.text(actionPill.x + actionWidth / 2, actionPill.y + 14, actionLabel, {
+    const actionText = this.createText(actionPill.x + metrics.actionWidth / 2, actionPill.y + 14, actionLabel, {
       fontFamily: UI_FONT_STACK,
-      fontSize: `${subtitleFontSize}px`,
+      fontSize: `${metrics.subtitleFontSize}px`,
       fontStyle: "bold",
       color: available ? "#efe4cf" : "#988e99"
     }).setOrigin(0.5);
-    actionText.setResolution(TEXT_RESOLUTION);
     actionText.setLetterSpacing(0.9);
 
-    container.add([shadow, card, accent, actionPill, actionText, titleText]);
-    if (subtitleText) {
-      container.add(subtitleText);
-    }
+    return { shadow, card, accent, actionPill, actionText };
+  }
 
+  createChoiceHitArea(width, cardHeight, available, container, onPress) {
     const hitArea = this.add.zone(0, 0, width, cardHeight).setOrigin(0, 0);
-    if (available) {
-      hitArea.setInteractive({ useHandCursor: true });
-      hitArea.on("pointerover", () => this.setChoiceCardState(container, "hover"));
-      hitArea.on("pointerout", () => this.setChoiceCardState(container, "idle"));
-      hitArea.on("pointerdown", () => {
-        this.setChoiceCardState(container, "pressed");
-      });
-      hitArea.on("pointerup", () => {
-        if (this.isDraggingChoices) {
-          this.setChoiceCardState(container, "idle");
-          return;
-        }
-        this.setChoiceCardState(container, "hover");
-        onPress();
-      });
+    if (!available) {
+      return hitArea;
     }
 
-    container.add(hitArea);
-    container.cardHeight = cardHeight;
-    container.stateParts = { shadow, card, accent, actionPill, actionText, titleText, subtitleText };
-    container.isAvailable = available;
-    this.setChoiceCardState(container, available ? "idle" : "locked");
-    return container;
+    hitArea.setInteractive({ useHandCursor: true });
+    hitArea.on("pointerover", () => this.setChoiceCardState(container, "hover"));
+    hitArea.on("pointerout", () => this.setChoiceCardState(container, "idle"));
+    hitArea.on("pointerdown", () => this.setChoiceCardState(container, "pressed"));
+    hitArea.on("pointerup", () => {
+      if (this.isDraggingChoices) {
+        this.setChoiceCardState(container, "idle");
+        return;
+      }
+
+      this.setChoiceCardState(container, "hover");
+      onPress();
+    });
+
+    return hitArea;
   }
 
   setChoiceCardState(container, state) {
@@ -762,6 +859,7 @@ class LoopScene extends Phaser.Scene {
     if (!choice.req) {
       return true;
     }
+
     return Object.entries(choice.req).every(([stat, value]) => this.currentStats[stat] >= value);
   }
 
@@ -770,14 +868,16 @@ class LoopScene extends Phaser.Scene {
       return;
     }
 
-    const effects = choice.effects || {};
-    this.currentStats = {
-      strength: Math.max(1, this.currentStats.strength + (effects.strength || 0)),
-      intellect: Math.max(1, this.currentStats.intellect + (effects.intellect || 0)),
-      charm: Math.max(1, this.currentStats.charm + (effects.charm || 0))
-    };
-
+    this.currentStats = this.applyEffects(this.currentStats, choice.effects || {});
     this.showEvent(choice.next);
+  }
+
+  applyEffects(stats, effects) {
+    return {
+      strength: Math.max(1, stats.strength + (effects.strength || 0)),
+      intellect: Math.max(1, stats.intellect + (effects.intellect || 0)),
+      charm: Math.max(1, stats.charm + (effects.charm || 0))
+    };
   }
 
   calculateCarryOver(stats) {
@@ -804,6 +904,12 @@ class LoopScene extends Phaser.Scene {
     this.applyChoiceScroll();
   }
 
+  applyChoiceScroll() {
+    if (this.choiceContainer) {
+      this.choiceContainer.y = this.ui.choicesY - this.choiceScrollY;
+    }
+  }
+
   resetChoicePointerState() {
     this.choicePointerDown = false;
     this.activeChoicePointerId = null;
@@ -814,12 +920,6 @@ class LoopScene extends Phaser.Scene {
     });
   }
 
-  applyChoiceScroll() {
-    if (this.choiceContainer) {
-      this.choiceContainer.y = this.ui.choicesY - this.choiceScrollY;
-    }
-  }
-
   isPointInChoiceViewport(x, y) {
     const { choicesX, choicesY, choicesWidth } = this.ui;
     return (
@@ -828,6 +928,24 @@ class LoopScene extends Phaser.Scene {
       y >= choicesY &&
       y <= choicesY + this.choiceViewportHeight
     );
+  }
+
+  normalizeStats(stats) {
+    return {
+      strength: Math.max(1, stats.strength || DEFAULT_STATS.strength),
+      intellect: Math.max(1, stats.intellect || DEFAULT_STATS.intellect),
+      charm: Math.max(1, stats.charm || DEFAULT_STATS.charm)
+    };
+  }
+
+  createText(x, y, value, style) {
+    const text = this.add.text(x, y, value, style);
+    text.setResolution(TEXT_RESOLUTION);
+    return text;
+  }
+
+  round(value) {
+    return Math.round(value);
   }
 }
 
