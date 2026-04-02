@@ -262,8 +262,7 @@ const EVENTS = [
     text: "You spend a long life mending feuds and feeding hungry homes. When the end comes, it arrives gently, as if the world is thanking you for finally doing one thing right.",
     death: true,
     deathLabel: "Died old after a peaceful life",
-    unlockTraits: ["noble_blood"],
-    reqRunFlags: ["won_council"]
+    unlockTraits: ["noble_blood"]
   },
   {
     id: "sage_death",
