@@ -15,11 +15,8 @@ class LoopScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.image("background", this.buildBackgroundDataUrl());
-    this.load.spritesheet("hero", this.buildHeroSheetDataUrl(), {
-      frameWidth: 32,
-      frameHeight: 32
-    });
+    this.createBackgroundTexture();
+    this.createHeroTextures();
   }
 
   create() {
@@ -31,117 +28,103 @@ class LoopScene extends Phaser.Scene {
 
   update() {}
 
-  buildBackgroundDataUrl() {
-    const canvas = document.createElement("canvas");
-    canvas.width = 216;
-    canvas.height = 384;
-    const ctx = canvas.getContext("2d");
-    ctx.imageSmoothingEnabled = false;
+  createBackgroundTexture() {
+    const graphics = this.make.graphics({ x: 0, y: 0, add: false });
 
-    ctx.fillStyle = "#1c1330";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    graphics.fillStyle(0x1c1330, 1);
+    graphics.fillRect(0, 0, 216, 384);
 
-    ctx.fillStyle = "#342454";
-    ctx.fillRect(0, 0, canvas.width, 140);
+    graphics.fillStyle(0x342454, 1);
+    graphics.fillRect(0, 0, 216, 140);
 
-    ctx.fillStyle = "#4f3a73";
+    graphics.fillStyle(0x4f3a73, 1);
     for (let i = 0; i < 8; i += 1) {
-      ctx.fillRect(i * 28, 110 - (i % 2) * 14, 26, 40 + (i % 3) * 12);
+      graphics.fillRect(i * 28, 110 - (i % 2) * 14, 26, 40 + (i % 3) * 12);
     }
 
-    ctx.fillStyle = "#7f5aa5";
-    ctx.fillRect(0, 140, canvas.width, 50);
+    graphics.fillStyle(0x7f5aa5, 1);
+    graphics.fillRect(0, 140, 216, 50);
 
-    ctx.fillStyle = "#24351c";
-    ctx.fillRect(0, 190, canvas.width, 84);
+    graphics.fillStyle(0x24351c, 1);
+    graphics.fillRect(0, 190, 216, 84);
 
-    ctx.fillStyle = "#385629";
+    graphics.fillStyle(0x385629, 1);
     for (let y = 190; y < 274; y += 8) {
-      for (let x = 0; x < canvas.width; x += 8) {
+      for (let x = 0; x < 216; x += 8) {
         if ((x + y) % 16 === 0) {
-          ctx.fillRect(x, y, 8, 8);
+          graphics.fillRect(x, y, 8, 8);
         }
       }
     }
 
-    ctx.fillStyle = "#182113";
-    ctx.fillRect(0, 274, canvas.width, 110);
+    graphics.fillStyle(0x182113, 1);
+    graphics.fillRect(0, 274, 216, 110);
 
-    ctx.fillStyle = "#f2e8a0";
+    graphics.fillStyle(0xf2e8a0, 1);
     const stars = [
       [18, 22], [48, 36], [96, 18], [132, 42], [170, 26], [194, 52]
     ];
-    stars.forEach(([x, y]) => ctx.fillRect(x, y, 3, 3));
+    stars.forEach(([x, y]) => graphics.fillRect(x, y, 3, 3));
 
-    ctx.fillStyle = "#ceb16d";
-    ctx.fillRect(156, 54, 18, 18);
-    ctx.fillStyle = "#e7d6a0";
-    ctx.fillRect(162, 60, 6, 6);
+    graphics.fillStyle(0xceb16d, 1);
+    graphics.fillRect(156, 54, 18, 18);
+    graphics.fillStyle(0xe7d6a0, 1);
+    graphics.fillRect(162, 60, 6, 6);
 
-    ctx.fillStyle = "#6e4f38";
-    ctx.fillRect(28, 150, 46, 42);
-    ctx.fillRect(144, 154, 54, 38);
-    ctx.fillStyle = "#b88956";
-    ctx.fillRect(24, 144, 54, 12);
-    ctx.fillRect(140, 146, 62, 12);
-    ctx.fillStyle = "#f6d28b";
-    ctx.fillRect(45, 170, 10, 12);
-    ctx.fillRect(166, 168, 10, 12);
+    graphics.fillStyle(0x6e4f38, 1);
+    graphics.fillRect(28, 150, 46, 42);
+    graphics.fillRect(144, 154, 54, 38);
+    graphics.fillStyle(0xb88956, 1);
+    graphics.fillRect(24, 144, 54, 12);
+    graphics.fillRect(140, 146, 62, 12);
+    graphics.fillStyle(0xf6d28b, 1);
+    graphics.fillRect(45, 170, 10, 12);
+    graphics.fillRect(166, 168, 10, 12);
 
-    return canvas.toDataURL("image/png");
+    graphics.generateTexture("background", 216, 384);
+    graphics.destroy();
   }
 
-  buildHeroSheetDataUrl() {
-    const frameSize = 32;
-    const frames = 4;
-    const canvas = document.createElement("canvas");
-    canvas.width = frameSize * frames;
-    canvas.height = frameSize;
-    const ctx = canvas.getContext("2d");
-    ctx.imageSmoothingEnabled = false;
-
-    const drawFrame = (frame) => {
-      const ox = frame * frameSize;
+  createHeroTextures() {
+    for (let frame = 0; frame < 4; frame += 1) {
+      const graphics = this.make.graphics({ x: 0, y: 0, add: false });
       const bodyOffset = frame % 2 === 0 ? 0 : 1;
       const armOffset = frame === 1 ? 1 : frame === 3 ? -1 : 0;
 
-      ctx.fillStyle = "#000000";
-      ctx.fillRect(ox + 10, 2, 12, 2);
+      graphics.fillStyle(0x000000, 1);
+      graphics.fillRect(10, 2, 12, 2);
 
-      ctx.fillStyle = "#f4c89a";
-      ctx.fillRect(ox + 10, 4, 12, 10);
+      graphics.fillStyle(0xf4c89a, 1);
+      graphics.fillRect(10, 4, 12, 10);
 
-      ctx.fillStyle = "#3a2942";
-      ctx.fillRect(ox + 8, 2, 16, 4);
-      ctx.fillRect(ox + 8, 6, 2, 4);
-      ctx.fillRect(ox + 22, 6, 2, 4);
+      graphics.fillStyle(0x3a2942, 1);
+      graphics.fillRect(8, 2, 16, 4);
+      graphics.fillRect(8, 6, 2, 4);
+      graphics.fillRect(22, 6, 2, 4);
 
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(ox + 13, 8, 2, 2);
-      ctx.fillRect(ox + 17, 8, 2, 2);
-      ctx.fillStyle = "#1f1724";
-      ctx.fillRect(ox + 14, 8, 1, 1);
-      ctx.fillRect(ox + 18, 8, 1, 1);
+      graphics.fillStyle(0xffffff, 1);
+      graphics.fillRect(13, 8, 2, 2);
+      graphics.fillRect(17, 8, 2, 2);
+      graphics.fillStyle(0x1f1724, 1);
+      graphics.fillRect(14, 8, 1, 1);
+      graphics.fillRect(18, 8, 1, 1);
 
-      ctx.fillStyle = "#8d5ea8";
-      ctx.fillRect(ox + 9, 14, 14, 10);
-      ctx.fillRect(ox + 11, 24, 4, 6);
-      ctx.fillRect(ox + 17, 24, 4, 6);
+      graphics.fillStyle(0x8d5ea8, 1);
+      graphics.fillRect(9, 14, 14, 10);
+      graphics.fillRect(11, 24, 4, 6);
+      graphics.fillRect(17, 24, 4, 6);
 
-      ctx.fillStyle = "#d9b281";
-      ctx.fillRect(ox + 8 + armOffset, 15, 2, 8);
-      ctx.fillRect(ox + 22 + armOffset, 15, 2, 8);
+      graphics.fillStyle(0xd9b281, 1);
+      graphics.fillRect(8 + armOffset, 15, 2, 8);
+      graphics.fillRect(22 + armOffset, 15, 2, 8);
 
-      ctx.fillStyle = "#4b6ea8";
-      ctx.fillRect(ox + 11, 30 - bodyOffset, 4, 2);
-      ctx.fillRect(ox + 17, 30 + bodyOffset - 2, 4, 2);
-    };
+      graphics.fillStyle(0x4b6ea8, 1);
+      graphics.fillRect(11, 30 - bodyOffset, 4, 2);
+      graphics.fillRect(17, 28 + bodyOffset, 4, 2);
 
-    for (let i = 0; i < frames; i += 1) {
-      drawFrame(i);
+      graphics.generateTexture(`hero-${frame}`, 32, 32);
+      graphics.destroy();
     }
-
-    return canvas.toDataURL("image/png");
   }
 
   loadProgress() {
@@ -182,7 +165,12 @@ class LoopScene extends Phaser.Scene {
     if (!this.anims.exists("hero-idle")) {
       this.anims.create({
         key: "hero-idle",
-        frames: this.anims.generateFrameNumbers("hero", { start: 0, end: 3 }),
+        frames: [
+          { key: "hero-0" },
+          { key: "hero-1" },
+          { key: "hero-2" },
+          { key: "hero-3" }
+        ],
         frameRate: 5,
         repeat: -1
       });
@@ -197,7 +185,7 @@ class LoopScene extends Phaser.Scene {
     this.add.rectangle(GAME_WIDTH / 2, 508, 280, 180, 0x000000, 0.18)
       .setStrokeStyle(2, 0xe2d6a8, 0.15);
 
-    this.hero = this.add.sprite(GAME_WIDTH / 2, 464, "hero")
+    this.hero = this.add.sprite(GAME_WIDTH / 2, 464, "hero-0")
       .setScale(4)
       .play("hero-idle");
 
