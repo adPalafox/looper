@@ -16,6 +16,7 @@ const CHOICE_DRAG_THRESHOLD = 8;
 const CHOICE_WHEEL_SPEED = 0.9;
 
 const TYPEWRITER_DELAY = 12;
+const FAST_TYPEWRITER_DELAY = 3;
 const HERO_FLOAT_OFFSET = 7;
 const HERO_FLOAT_DURATION = 2200;
 const HERO_BASE_SCALE = 0.65;
@@ -28,6 +29,42 @@ const FEEDBACK_COLORS = Object.freeze({
   cool: 0xaebde4,
   death: 0x5c2f3d,
   rebirth: 0xd9c596
+});
+
+const SOUL_TRAITS = Object.freeze({
+  survivor: {
+    label: "Survivor",
+    description: "+2 STR at the start of every life.",
+    bonuses: { strength: 2 }
+  },
+  noble_blood: {
+    label: "Noble Blood",
+    description: "+1 CHA at the start of every life.",
+    bonuses: { charm: 1 }
+  },
+  scholar_mind: {
+    label: "Scholar Mind",
+    description: "+1 INT at the start of every life.",
+    bonuses: { intellect: 1 }
+  },
+  wanderer_instinct: {
+    label: "Wanderer Instinct",
+    description: "You notice escape routes others miss.",
+    bonuses: {}
+  },
+  echo_mark: {
+    label: "Echo Mark",
+    description: "Certain souls recognize you across lives.",
+    bonuses: {}
+  }
+});
+
+const IMPORTANT_FLAG_TEXT = Object.freeze({
+  died_in_forest: "The forest now remembers your death.",
+  met_mysterious_girl: "A silver-eyed girl now exists in your memory.",
+  heard_perfect_timeline: "You heard whispers of a perfect timeline.",
+  found_memory_pearl: "The memory pearl has entered your soul's history.",
+  earned_true_ending: "You discovered the true ending."
 });
 
 class LoopScene extends Phaser.Scene {
@@ -53,8 +90,17 @@ class LoopScene extends Phaser.Scene {
     this.baseStats = { ...DEFAULT_STATS };
     this.currentStats = { ...DEFAULT_STATS };
     this.lifeNumber = 1;
+    this.traits = {};
+    this.flags = {};
+    this.seenEvents = {};
+    this.endingState = { trueEndingUnlocked: false, trueEndingLife: null };
+
     this.currentEvent = null;
+    this.currentEventSeenBefore = false;
+    this.currentNarrativeText = "";
     this.typeEvent = null;
+    this.storyCompleteCallback = null;
+    this.currentTypingDelay = TYPEWRITER_DELAY;
 
     this.choiceNodes = [];
     this.choiceScrollY = 0;
@@ -69,6 +115,9 @@ class LoopScene extends Phaser.Scene {
     this.isTyping = false;
     this.isTransitioning = false;
     this.ui = {};
+    this.runFlags = {};
+    this.currentLifeTraitUnlocks = [];
+    this.currentLifeDiscoveries = [];
   }
 
   bootstrapScene() {
@@ -133,6 +182,11 @@ class LoopScene extends Phaser.Scene {
       if (Number.isInteger(save?.lifeNumber) && save.lifeNumber > 0) {
         this.lifeNumber = save.lifeNumber;
       }
+
+      this.traits = this.normalizeBooleanMap(save?.traits, Object.keys(SOUL_TRAITS));
+      this.flags = this.normalizeBooleanMap(save?.flags, Object.keys(IMPORTANT_FLAG_TEXT));
+      this.seenEvents = this.normalizeBooleanMap(save?.seenEvents);
+      this.endingState = this.normalizeEndingState(save?.endingState, this.flags.earned_true_ending, this.lifeNumber);
     } catch {
       localStorage.removeItem(STORAGE_KEY);
     }
@@ -143,7 +197,11 @@ class LoopScene extends Phaser.Scene {
       STORAGE_KEY,
       JSON.stringify({
         baseStats: this.baseStats,
-        lifeNumber: this.lifeNumber
+        lifeNumber: this.lifeNumber,
+        traits: this.traits,
+        flags: this.flags,
+        seenEvents: this.seenEvents,
+        endingState: this.endingState
       })
     );
   }
@@ -181,6 +239,11 @@ class LoopScene extends Phaser.Scene {
     this.statText = this.createText(0, 0, "", {
       fontFamily: UI_FONT_STACK,
       color: "#c8cfdf"
+    });
+
+    this.traitText = this.createText(0, 0, "", {
+      fontFamily: UI_FONT_STACK,
+      color: "#9ea8bc"
     });
   }
 
@@ -262,6 +325,11 @@ class LoopScene extends Phaser.Scene {
   }
 
   handleChoicePointerDown(pointer) {
+    if (this.isTyping) {
+      this.revealStoryText();
+      return;
+    }
+
     if (!pointer.leftButtonDown() || !this.canStartChoiceDrag(pointer)) {
       return;
     }
@@ -318,12 +386,13 @@ class LoopScene extends Phaser.Scene {
     const marginX = Phaser.Math.Clamp(width * 0.055, 18, 32);
     const safeTop = Phaser.Math.Clamp(height * 0.04, 20, 38);
     const safeBottom = Phaser.Math.Clamp(height * 0.025, 16, 28);
-    const headerHeight = Phaser.Math.Clamp(height * 0.095, 68, 96);
+    const headerHeight = Phaser.Math.Clamp(height * 0.115, 84, 122);
     const panelWidth = width - marginX * 2;
     const panelPadding = Phaser.Math.Clamp(panelWidth * 0.065, 20, 30);
     const labelFont = Phaser.Math.Clamp(width * 0.03, 11, 13);
     const headerFont = Phaser.Math.Clamp(width * 0.043, 16, 20);
     const metaFont = Phaser.Math.Clamp(width * 0.034, 13, 15);
+    const traitFont = Phaser.Math.Clamp(width * 0.029, 11, 13);
     const storyFont = Phaser.Math.Clamp(width * 0.043, 16, 19);
     const choiceFont = Phaser.Math.Clamp(width * 0.039, 15, 17);
     const choiceMetaFont = Phaser.Math.Clamp(width * 0.031, 12, 13);
@@ -353,6 +422,7 @@ class LoopScene extends Phaser.Scene {
       labelFont,
       headerFont,
       metaFont,
+      traitFont,
       storyFont,
       choiceFont,
       choiceMetaFont,
@@ -473,7 +543,7 @@ class LoopScene extends Phaser.Scene {
   }
 
   layoutHeader() {
-    const { width, safeTop, headerHeight, panelWidth, marginX, panelPadding, headerFont, metaFont } = this.ui;
+    const { width, safeTop, headerHeight, panelWidth, marginX, panelPadding, headerFont, metaFont, traitFont, storyWidth } = this.ui;
 
     this.headerPanel.setPosition(this.round(width / 2), this.round(safeTop + headerHeight / 2));
     this.headerPanel.setSize(panelWidth, headerHeight);
@@ -485,6 +555,11 @@ class LoopScene extends Phaser.Scene {
     this.statText.setPosition(this.round(marginX + panelPadding), this.round(safeTop + 18 + headerFont * 1.35));
     this.statText.setFontSize(metaFont);
     this.statText.setColor("#b6bdcf");
+
+    this.traitText.setPosition(this.round(marginX + panelPadding), this.round(safeTop + 24 + headerFont * 1.35 + metaFont));
+    this.traitText.setFontSize(traitFont);
+    this.traitText.setColor("#98a3b7");
+    this.traitText.setWordWrapWidth(storyWidth, true);
   }
 
   layoutStoryPanel() {
@@ -538,12 +613,17 @@ class LoopScene extends Phaser.Scene {
   }
 
   beginLife() {
-    this.currentStats = { ...this.baseStats };
+    this.runFlags = {};
+    this.currentLifeTraitUnlocks = [];
+    this.currentLifeDiscoveries = [];
+    this.currentStats = this.applyEffects(this.baseStats, this.getTraitBonuses());
     this.showEvent("start");
   }
 
   showEvent(eventId, options = {}) {
     this.currentEvent = this.getEventById(eventId);
+    this.currentEventSeenBefore = Boolean(this.seenEvents[eventId]);
+    this.applyEventState(this.currentEvent);
     this.refreshCurrentView(false, options);
   }
 
@@ -556,17 +636,39 @@ class LoopScene extends Phaser.Scene {
       return "";
     }
 
+    const eventText = this.resolveEventText(this.currentEvent);
     if (!this.currentEvent.death) {
-      return this.currentEvent.text;
+      return eventText;
     }
 
     const carry = this.calculateCarryOver(this.currentStats);
-    return [
-      this.currentEvent.text,
+    const traitBonuses = this.getTraitBonuses();
+    const nextLifeStats = this.applyEffects(carry, traitBonuses);
+    const lines = [
+      eventText,
       "",
       `End: ${this.currentEvent.deathLabel}`,
-      `Carry over: STR ${carry.strength}  INT ${carry.intellect}  CHA ${carry.charm}`
-    ].join("\n");
+      `Final stats: STR ${this.currentStats.strength}  INT ${this.currentStats.intellect}  CHA ${this.currentStats.charm}`,
+      `Next base carry-over: STR ${carry.strength}  INT ${carry.intellect}  CHA ${carry.charm}`,
+      `Trait bonuses: STR +${traitBonuses.strength}  INT +${traitBonuses.intellect}  CHA +${traitBonuses.charm}`,
+      `Next life starts at: STR ${nextLifeStats.strength}  INT ${nextLifeStats.intellect}  CHA ${nextLifeStats.charm}`
+    ];
+
+    const newTraits = this.getCurrentLifeUnlockedTraitLabels();
+    if (newTraits.length) {
+      lines.push(`Soul trait unlocked: ${newTraits.join(", ")}`);
+    }
+
+    const memories = this.getCurrentLifeDiscoveryText();
+    if (memories.length) {
+      lines.push(`Memory gained: ${memories.join(" / ")}`);
+    }
+
+    if (this.currentEvent.trueEnding) {
+      lines.push("The hidden perfect timeline has been discovered.");
+    }
+
+    return lines.join("\n");
   }
 
   refreshCurrentView(skipTyping = false, options = {}) {
@@ -575,6 +677,7 @@ class LoopScene extends Phaser.Scene {
     }
 
     const narrativeText = this.getCurrentNarrativeText();
+    this.currentNarrativeText = narrativeText;
     this.layoutScene(narrativeText);
     this.clearChoices();
     this.renderStats();
@@ -591,21 +694,20 @@ class LoopScene extends Phaser.Scene {
   }
 
   renderStats() {
-    this.lifeText.setText(`Life ${this.lifeNumber}`);
+    this.lifeText.setText(this.endingState.trueEndingUnlocked ? `Life ${this.lifeNumber}  |  True Ending Found` : `Life ${this.lifeNumber}`);
     this.statText.setText(
       `STR ${this.currentStats.strength}   INT ${this.currentStats.intellect}   CHA ${this.currentStats.charm}`
     );
+    this.traitText.setText(`Traits: ${this.getTraitSummaryText()}`);
   }
 
   setStoryText(text, skipTyping, onComplete) {
     this.stopTyping();
+    this.storyCompleteCallback = onComplete || null;
+    this.currentTypingDelay = this.currentEventSeenBefore ? FAST_TYPEWRITER_DELAY : TYPEWRITER_DELAY;
 
     if (skipTyping) {
-      this.isTyping = false;
-      this.storyText.setText(text);
-      if (onComplete) {
-        onComplete();
-      }
+      this.completeStoryText(text);
       return;
     }
 
@@ -614,17 +716,13 @@ class LoopScene extends Phaser.Scene {
     let index = 0;
 
     this.typeEvent = this.time.addEvent({
-      delay: TYPEWRITER_DELAY,
+      delay: this.currentTypingDelay,
       repeat: Math.max(text.length - 1, 0),
       callback: () => {
         index += 1;
         this.storyText.setText(text.slice(0, index));
         if (index >= text.length) {
-          this.isTyping = false;
-          this.typeEvent = null;
-          if (onComplete) {
-            onComplete();
-          }
+          this.completeStoryText(text);
         }
       }
     });
@@ -635,6 +733,37 @@ class LoopScene extends Phaser.Scene {
       this.typeEvent.remove(false);
       this.typeEvent = null;
     }
+  }
+
+  revealStoryText() {
+    if (!this.isTyping) {
+      return;
+    }
+
+    this.stopTyping();
+    this.completeStoryText(this.currentNarrativeText);
+  }
+
+  completeStoryText(text) {
+    this.isTyping = false;
+    this.typeEvent = null;
+    this.storyText.setText(text);
+    this.markEventSeen(this.currentEvent?.id);
+
+    const callback = this.storyCompleteCallback;
+    this.storyCompleteCallback = null;
+    if (callback) {
+      callback();
+    }
+  }
+
+  markEventSeen(eventId) {
+    if (!eventId || this.seenEvents[eventId]) {
+      return;
+    }
+
+    this.seenEvents[eventId] = true;
+    this.saveProgress();
   }
 
   clearChoices() {
@@ -652,12 +781,16 @@ class LoopScene extends Phaser.Scene {
 
     choices.forEach((choice) => {
       const available = this.canChoose(choice);
+      if (choice.hiddenWhenLocked && !available) {
+        return;
+      }
+
       const button = this.createChoiceCard({
         y: offsetY,
         title: this.getChoiceLabel(choice, available),
         available,
         actionLabel: available ? "Choose" : "Locked",
-        subtitle: available ? null : `Requires ${this.formatRequirement(choice.req)}`,
+        subtitle: available ? null : `Requires ${this.formatRequirement(choice)}`,
         onPress: () => this.pickChoice(choice)
       });
 
@@ -674,10 +807,12 @@ class LoopScene extends Phaser.Scene {
   showDeathChoice() {
     const button = this.createChoiceCard({
       y: 0,
-      title: "Begin the next life",
+      title: this.currentEvent?.trueEnding ? "Return to the wheel" : "Begin the next life",
       available: true,
-      actionLabel: "Reincarnate",
-      subtitle: "Carry your strongest fragments into another run.",
+      actionLabel: this.currentEvent?.trueEnding ? "Reawaken" : "Reincarnate",
+      subtitle: this.currentEvent?.trueEnding
+        ? "The perfect timeline is found, but the wheel still turns if you ask it to."
+        : "Carry your strongest fragments into another run.",
       onPress: () => this.reincarnate()
     });
 
@@ -693,7 +828,7 @@ class LoopScene extends Phaser.Scene {
       return choice.text;
     }
 
-    return `${choice.text} [need ${this.formatRequirement(choice.req)}]`;
+    return `${choice.text} [need ${this.formatRequirement(choice)}]`;
   }
 
   createChoiceCard({ y, title, available, actionLabel, subtitle, onPress }) {
@@ -897,24 +1032,34 @@ class LoopScene extends Phaser.Scene {
 
   formatRequirement(req) {
     const parts = [];
-    if (req.strength) {
-      parts.push(`STR ${req.strength}`);
+    const stats = req?.reqStats || req?.req;
+
+    if (stats?.strength) {
+      parts.push(`STR ${stats.strength}`);
     }
-    if (req.intellect) {
-      parts.push(`INT ${req.intellect}`);
+    if (stats?.intellect) {
+      parts.push(`INT ${stats.intellect}`);
     }
-    if (req.charm) {
-      parts.push(`CHA ${req.charm}`);
+    if (stats?.charm) {
+      parts.push(`CHA ${stats.charm}`);
+    }
+    if (req?.reqTraits?.length) {
+      parts.push(req.reqTraits.map((traitId) => SOUL_TRAITS[traitId]?.label || traitId).join(" + "));
+    }
+    if (req?.reqFlags?.length) {
+      parts.push(req.reqFlags.map((flagId) => IMPORTANT_FLAG_TEXT[flagId] || flagId).join(" + "));
+    }
+    if (req?.reqRunFlags?.length) {
+      parts.push("a matching life path");
+    }
+    if (req?.reqAny?.length) {
+      parts.push("one hidden memory condition");
     }
     return parts.join(", ");
   }
 
   canChoose(choice) {
-    if (!choice.req) {
-      return true;
-    }
-
-    return Object.entries(choice.req).every(([stat, value]) => this.currentStats[stat] >= value);
+    return this.matchesRequirements(choice);
   }
 
   pickChoice(choice) {
@@ -927,6 +1072,9 @@ class LoopScene extends Phaser.Scene {
     const statDelta = this.getStatDelta(previousStats, nextStats);
 
     this.currentStats = nextStats;
+    this.applyPersistentFlags(choice.setFlags);
+    this.applyRunFlags(choice.setRunFlags);
+    this.unlockTraits(choice.unlockTraits);
     this.renderStats();
     this.playChoiceFeedback(statDelta);
     this.transitionToEvent(choice.next);
@@ -938,6 +1086,191 @@ class LoopScene extends Phaser.Scene {
       intellect: Math.max(1, stats.intellect + (effects.intellect || 0)),
       charm: Math.max(1, stats.charm + (effects.charm || 0))
     };
+  }
+
+  normalizeBooleanMap(value, allowedKeys = null) {
+    if (!value || typeof value !== "object") {
+      return {};
+    }
+
+    return Object.entries(value).reduce((result, [key, flag]) => {
+      if (allowedKeys && !allowedKeys.includes(key)) {
+        return result;
+      }
+
+      if (flag) {
+        result[key] = true;
+      }
+      return result;
+    }, {});
+  }
+
+  normalizeEndingState(value, earnedTrueEnding, currentLifeNumber) {
+    if (!value || typeof value !== "object") {
+      return {
+        trueEndingUnlocked: Boolean(earnedTrueEnding),
+        trueEndingLife: earnedTrueEnding ? currentLifeNumber : null
+      };
+    }
+
+    return {
+      trueEndingUnlocked: Boolean(value.trueEndingUnlocked || earnedTrueEnding),
+      trueEndingLife: Number.isInteger(value.trueEndingLife) ? value.trueEndingLife : (earnedTrueEnding ? currentLifeNumber : null)
+    };
+  }
+
+  resolveEventText(event) {
+    if (!event) {
+      return "";
+    }
+
+    return typeof event.text === "function" ? event.text(this) : event.text;
+  }
+
+  applyEventState(event) {
+    if (!event) {
+      return;
+    }
+
+    this.applyPersistentFlags(event.setFlags);
+    this.applyRunFlags(event.setRunFlags);
+
+    if (this.matchesRequirements(event)) {
+      this.unlockTraits(event.unlockTraits);
+    }
+
+    if (event.trueEnding) {
+      this.endingState.trueEndingUnlocked = true;
+      if (!this.endingState.trueEndingLife) {
+        this.endingState.trueEndingLife = this.lifeNumber;
+      }
+      this.saveProgress();
+    }
+  }
+
+  applyPersistentFlags(flagMap) {
+    if (!flagMap) {
+      return;
+    }
+
+    let changed = false;
+
+    Object.entries(flagMap).forEach(([flagId, nextValue]) => {
+      if (!nextValue) {
+        return;
+      }
+
+      if (!this.flags[flagId]) {
+        this.flags[flagId] = true;
+        changed = true;
+
+        const discoveryText = IMPORTANT_FLAG_TEXT[flagId];
+        if (discoveryText && !this.currentLifeDiscoveries.includes(discoveryText)) {
+          this.currentLifeDiscoveries.push(discoveryText);
+        }
+      }
+    });
+
+    if (changed) {
+      this.saveProgress();
+    }
+  }
+
+  applyRunFlags(flagMap) {
+    if (!flagMap) {
+      return;
+    }
+
+    Object.entries(flagMap).forEach(([flagId, nextValue]) => {
+      if (nextValue) {
+        this.runFlags[flagId] = true;
+      }
+    });
+  }
+
+  unlockTraits(traitIds = []) {
+    if (!traitIds?.length) {
+      return;
+    }
+
+    let changed = false;
+
+    traitIds.forEach((traitId) => {
+      if (!SOUL_TRAITS[traitId] || this.traits[traitId]) {
+        return;
+      }
+
+      this.traits[traitId] = true;
+      changed = true;
+
+      if (!this.currentLifeTraitUnlocks.includes(traitId)) {
+        this.currentLifeTraitUnlocks.push(traitId);
+      }
+    });
+
+    if (changed) {
+      this.saveProgress();
+    }
+  }
+
+  getTraitBonuses() {
+    return Object.keys(this.traits).reduce((bonuses, traitId) => {
+      const trait = SOUL_TRAITS[traitId];
+      if (!trait?.bonuses) {
+        return bonuses;
+      }
+
+      return {
+        strength: bonuses.strength + (trait.bonuses.strength || 0),
+        intellect: bonuses.intellect + (trait.bonuses.intellect || 0),
+        charm: bonuses.charm + (trait.bonuses.charm || 0)
+      };
+    }, { strength: 0, intellect: 0, charm: 0 });
+  }
+
+  matchesRequirements(source) {
+    if (!source) {
+      return true;
+    }
+
+    const stats = source.reqStats || source.req;
+    if (stats && !Object.entries(stats).every(([stat, value]) => this.currentStats[stat] >= value)) {
+      return false;
+    }
+
+    if (source.reqTraits && !source.reqTraits.every((traitId) => this.traits[traitId])) {
+      return false;
+    }
+
+    if (source.reqFlags && !source.reqFlags.every((flagId) => this.flags[flagId])) {
+      return false;
+    }
+
+    if (source.reqRunFlags && !source.reqRunFlags.every((flagId) => this.runFlags[flagId])) {
+      return false;
+    }
+
+    if (source.reqAny?.length) {
+      const anyMatch = source.reqAny.some((option) => this.matchesRequirements(option));
+      if (!anyMatch) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  getCurrentLifeUnlockedTraitLabels() {
+    return this.currentLifeTraitUnlocks.map((traitId) => SOUL_TRAITS[traitId]?.label || traitId);
+  }
+
+  getCurrentLifeDiscoveryText() {
+    return this.currentLifeDiscoveries;
+  }
+
+  getTraitSummaryText() {
+    const labels = Object.keys(this.traits).map((traitId) => SOUL_TRAITS[traitId]?.label || traitId);
+    return labels.length ? labels.join(", ") : "None yet";
   }
 
   calculateCarryOver(stats) {
@@ -1102,7 +1435,10 @@ class LoopScene extends Phaser.Scene {
     this.pulseHeroHalo(FEEDBACK_COLORS.death, 0.24);
     this.pulsePanelGlow(FEEDBACK_COLORS.death, 0.14);
     this.playVeilPulse(FEEDBACK_COLORS.death, 0.16, 520);
-    this.showStatusBanner(`Life ${this.lifeNumber} Ends`, "#e9c6c8");
+    this.showStatusBanner(
+      event.trueEnding ? "True Ending Discovered" : `Life ${this.lifeNumber} Ends`,
+      event.trueEnding ? "#f2df9f" : "#e9c6c8"
+    );
   }
 
   playReincarnationFeedback(onComplete) {
