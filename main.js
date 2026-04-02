@@ -17,6 +17,8 @@ class LoopScene extends Phaser.Scene {
     this.choicePointerDown = false;
     this.lastDragY = 0;
     this.dragStartY = 0;
+    this.isTransitioning = false;
+    this.feedbackNodes = [];
     this.ui = {};
   }
 
@@ -140,6 +142,7 @@ class LoopScene extends Phaser.Scene {
     this.storyPanelShadow = this.add.rectangle(0, 0, 100, 100, 0x000000, 0.18);
     this.storyPanel = this.add.rectangle(0, 0, 100, 100, 0x14111d, 0.94);
     this.storyPanel.setStrokeStyle(1, 0xffffff, 0.07);
+    this.storyPanelAccent = this.add.rectangle(0, 0, 100, 3, 0xc49b62, 0.85).setOrigin(0.5, 0);
 
     this.storyText = this.add.text(0, 0, "", {
       fontFamily: '"Iowan Old Style", Georgia, "Times New Roman", serif',
@@ -159,6 +162,18 @@ class LoopScene extends Phaser.Scene {
     this.choiceMaskGraphics = this.make.graphics({ x: 0, y: 0, add: false });
     this.choiceMask = this.choiceMaskGraphics.createGeometryMask();
     this.choiceContainer.setMask(this.choiceMask);
+    this.feedbackLayer = this.add.container(0, 0).setDepth(40);
+    this.screenFlash = this.add.rectangle(0, 0, 10, 10, 0xffffff, 0).setOrigin(0).setDepth(45);
+    this.eventBanner = this.add.container(0, 0).setDepth(50);
+    this.eventBannerBg = this.add.rectangle(0, 0, 180, 36, 0x15121d, 0.92).setOrigin(0.5);
+    this.eventBannerBg.setStrokeStyle(1, 0xffffff, 0.08);
+    this.eventBannerText = this.add.text(0, 0, "", {
+      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontSize: "14px",
+      color: "#f8f1df"
+    }).setOrigin(0.5);
+    this.eventBanner.add([this.eventBannerBg, this.eventBannerText]);
+    this.eventBanner.setAlpha(0);
 
     this.tweens.add({
       targets: [this.hero, this.heroHalo],
@@ -335,6 +350,8 @@ class LoopScene extends Phaser.Scene {
 
     this.storyPanel.setPosition(width / 2, panelTop + panelHeight / 2);
     this.storyPanel.setSize(panelWidth, panelHeight);
+    this.storyPanelAccent.setPosition(width / 2, panelTop);
+    this.storyPanelAccent.width = panelWidth;
 
     this.storyText.setPosition(marginX + panelPadding, panelTop + panelPadding);
     this.storyText.setFontSize(storyFont);
@@ -356,6 +373,11 @@ class LoopScene extends Phaser.Scene {
     this.choiceMaskGraphics.clear();
     this.choiceMaskGraphics.fillStyle(0xffffff, 1);
     this.choiceMaskGraphics.fillRect(choicesX, choicesY, choicesWidth, this.choiceViewportHeight);
+
+    this.screenFlash.setSize(width, height);
+    this.eventBanner.setPosition(width / 2, panelTop - 20);
+    this.eventBannerBg.setSize(Math.min(panelWidth * 0.72, 280), Math.max(36, baseFont * 2.1));
+    this.eventBannerText.setFontSize(baseFont * 0.82);
   }
 
   beginLife() {
@@ -386,6 +408,7 @@ class LoopScene extends Phaser.Scene {
 
     this.clearChoices();
     this.renderStats();
+    this.playEventTransition(this.currentEvent, skipTyping);
 
     if (this.currentEvent.death) {
       const carry = this.calculateCarryOver(this.currentStats);
@@ -411,6 +434,7 @@ class LoopScene extends Phaser.Scene {
 
     if (skipTyping) {
       this.isTyping = false;
+      this.storyText.setAlpha(1);
       this.storyText.setText(text);
       if (onComplete) {
         onComplete();
@@ -419,6 +443,7 @@ class LoopScene extends Phaser.Scene {
     }
 
     this.isTyping = true;
+    this.storyText.setAlpha(0.92);
     this.storyText.setText("");
     let index = 0;
 
@@ -430,6 +455,12 @@ class LoopScene extends Phaser.Scene {
         this.storyText.setText(text.slice(0, index));
         if (index >= text.length) {
           this.isTyping = false;
+          this.tweens.add({
+            targets: this.storyText,
+            alpha: 1,
+            duration: 220,
+            ease: "Quad.out"
+          });
           if (onComplete) {
             onComplete();
           }
@@ -448,6 +479,7 @@ class LoopScene extends Phaser.Scene {
 
   showChoices(choices) {
     let offsetY = 0;
+    const cards = [];
 
     choices.forEach((choice) => {
       const available = this.canChoose(choice);
@@ -463,11 +495,13 @@ class LoopScene extends Phaser.Scene {
 
       this.choiceContainer.add(button);
       this.choiceNodes.push(button);
+      cards.push(button);
       offsetY += button.cardHeight + 14;
     });
 
     this.choiceContentHeight = Math.max(0, offsetY - 14);
     this.applyChoiceScroll();
+    this.animateChoiceCards(cards);
   }
 
   showDeathChoice() {
@@ -484,6 +518,7 @@ class LoopScene extends Phaser.Scene {
     this.choiceNodes.push(button);
     this.choiceContentHeight = button.cardHeight;
     this.applyChoiceScroll();
+    this.animateChoiceCards([button]);
   }
 
   createChoiceCard({ y, title, available, actionLabel, subtitle, onPress }) {
@@ -657,18 +692,33 @@ class LoopScene extends Phaser.Scene {
   }
 
   pickChoice(choice) {
-    if (!this.canChoose(choice) || this.isTyping || this.isDraggingChoices) {
+    if (!this.canChoose(choice) || this.isTyping || this.isDraggingChoices || this.isTransitioning) {
       return;
     }
 
     const effects = choice.effects || {};
+    const previousStats = { ...this.currentStats };
     this.currentStats = {
       strength: Math.max(1, this.currentStats.strength + (effects.strength || 0)),
       intellect: Math.max(1, this.currentStats.intellect + (effects.intellect || 0)),
       charm: Math.max(1, this.currentStats.charm + (effects.charm || 0))
     };
+    const deltas = {
+      strength: this.currentStats.strength - previousStats.strength,
+      intellect: this.currentStats.intellect - previousStats.intellect,
+      charm: this.currentStats.charm - previousStats.charm
+    };
 
-    this.showEvent(choice.next);
+    this.isTransitioning = true;
+    this.renderStats();
+    this.emitStatFeedback(deltas);
+    this.pulseStats(deltas);
+    this.flashScene(choice.next);
+
+    this.time.delayedCall(260, () => {
+      this.isTransitioning = false;
+      this.showEvent(choice.next);
+    });
   }
 
   calculateCarryOver(stats) {
@@ -680,10 +730,12 @@ class LoopScene extends Phaser.Scene {
   }
 
   reincarnate() {
+    this.showBanner("Fragments Return", 0x8a74d6, 0xf5efff);
+    this.flashScreen(0xc7b7ff, 0.14, 520);
     this.baseStats = this.calculateCarryOver(this.currentStats);
     this.lifeNumber += 1;
     this.saveProgress();
-    this.beginLife();
+    this.time.delayedCall(280, () => this.beginLife());
   }
 
   getMaxChoiceScroll() {
@@ -709,6 +761,154 @@ class LoopScene extends Phaser.Scene {
       y >= choicesY &&
       y <= choicesY + this.choiceViewportHeight
     );
+  }
+
+  animateChoiceCards(cards) {
+    cards.forEach((card, index) => {
+      card.alpha = 0;
+      card.y += 12;
+      this.tweens.add({
+        targets: card,
+        alpha: 1,
+        y: card.y - 12,
+        duration: 220,
+        delay: index * 45,
+        ease: "Quad.out"
+      });
+    });
+  }
+
+  emitStatFeedback(deltas) {
+    const entries = [
+      ["strength", "STR", "#e0b977"],
+      ["intellect", "INT", "#8dc7ff"],
+      ["charm", "CHA", "#e1a6d7"]
+    ].filter(([key]) => deltas[key] !== 0);
+
+    entries.forEach(([key, label, color], index) => {
+      const value = deltas[key] > 0 ? `+${deltas[key]}` : `${deltas[key]}`;
+      const toast = this.add.text(
+        this.lifeText.x,
+        this.statText.y + this.statText.height + 8 + index * 18,
+        `${label} ${value}`,
+        {
+          fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          fontSize: `${Math.max(12, this.ui.baseFont * 0.78)}px`,
+          color
+        }
+      ).setDepth(48);
+
+      this.feedbackNodes.push(toast);
+      this.tweens.add({
+        targets: toast,
+        y: toast.y - 18,
+        alpha: 0,
+        duration: 900,
+        ease: "Cubic.out",
+        onComplete: () => toast.destroy()
+      });
+    });
+  }
+
+  pulseStats(deltas) {
+    const positiveChange = Object.values(deltas).some((value) => value > 0);
+    const flashColor = positiveChange ? "#f5e7c9" : "#c8cfdf";
+    this.statText.setColor(flashColor);
+    this.tweens.add({
+      targets: [this.lifeText, this.statText],
+      scaleX: 1.03,
+      scaleY: 1.03,
+      duration: 140,
+      yoyo: true,
+      ease: "Quad.out",
+      onComplete: () => {
+        this.lifeText.setScale(1);
+        this.statText.setScale(1);
+        this.statText.setColor("#c8cfdf");
+      }
+    });
+  }
+
+  playEventTransition(event, skipTyping) {
+    if (skipTyping) {
+      this.storyPanelAccent.setAlpha(0.85);
+      return;
+    }
+
+    const accentColor = event.death ? 0xb78080 : 0xc49b62;
+    this.storyPanelAccent.setFillStyle(accentColor, 0.92);
+    this.storyPanelAccent.setAlpha(0.2);
+    this.storyPanel.setAlpha(0.97);
+    this.tweens.add({
+      targets: [this.storyPanel, this.storyPanelShadow],
+      alpha: { from: 0.82, to: 1 },
+      duration: 260,
+      ease: "Quad.out"
+    });
+    this.tweens.add({
+      targets: this.storyPanelAccent,
+      alpha: { from: 0.18, to: 0.85 },
+      duration: 320,
+      ease: "Sine.out"
+    });
+
+    if (event.death) {
+      this.showBanner("A Life Ends", 0x8a505e, 0xffeef1);
+      this.flashScreen(0x8a505e, 0.12, 480);
+    } else if (event.id === "start") {
+      this.showBanner(`Life ${this.lifeNumber}`, 0x8a74d6, 0xf4efff);
+      if (this.lifeNumber > 1) {
+        this.flashScreen(0xc7b7ff, 0.08, 360);
+      }
+    }
+  }
+
+  flashScene(nextEventId) {
+    const target = this.getEventById(nextEventId);
+    if (target.death) {
+      this.flashScreen(0x8a505e, 0.1, 360);
+      return;
+    }
+
+    this.flashScreen(0xf0d8a8, 0.06, 240);
+  }
+
+  flashScreen(color, alpha, duration) {
+    this.screenFlash.setFillStyle(color, 1);
+    this.screenFlash.setAlpha(alpha);
+    this.tweens.killTweensOf(this.screenFlash);
+    this.tweens.add({
+      targets: this.screenFlash,
+      alpha: 0,
+      duration,
+      ease: "Quad.out"
+    });
+  }
+
+  showBanner(text, bgColor, textColor) {
+    this.eventBannerText.setText(text);
+    this.eventBannerText.setColor(textColor);
+    this.eventBannerBg.setFillStyle(bgColor, 0.22);
+    this.eventBannerBg.setStrokeStyle(1, bgColor, 0.62);
+    this.eventBanner.y += 8;
+    this.eventBanner.setAlpha(0);
+    this.tweens.killTweensOf(this.eventBanner);
+    this.tweens.add({
+      targets: this.eventBanner,
+      alpha: 1,
+      y: this.eventBanner.y - 8,
+      duration: 240,
+      ease: "Quad.out",
+      onComplete: () => {
+        this.tweens.add({
+          targets: this.eventBanner,
+          alpha: 0,
+          delay: 900,
+          duration: 420,
+          ease: "Quad.in"
+        });
+      }
+    });
   }
 }
 
