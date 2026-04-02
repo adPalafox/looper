@@ -1,5 +1,8 @@
 const STORAGE_KEY = "rekindled-loop-save";
 const IS_FILE_PROTOCOL = window.location.protocol === "file:";
+const UI_FONT_STACK = '"Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif';
+const STORY_FONT_STACK = '"Baskerville", "Iowan Old Style", Georgia, serif';
+const TEXT_RESOLUTION = Math.max(2, Math.ceil(window.devicePixelRatio || 1));
 
 class LoopScene extends Phaser.Scene {
   constructor() {
@@ -15,6 +18,7 @@ class LoopScene extends Phaser.Scene {
     this.isTyping = false;
     this.isDraggingChoices = false;
     this.choicePointerDown = false;
+    this.activeChoicePointerId = null;
     this.lastDragY = 0;
     this.dragStartY = 0;
     this.ui = {};
@@ -47,11 +51,12 @@ class LoopScene extends Phaser.Scene {
     const { width, height } = this.scale.gameSize;
     this.add.rectangle(width / 2, height / 2, width, height, 0x111019, 1);
     this.loadingText = this.add.text(width / 2, height / 2, "Loading artwork...", {
-      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: UI_FONT_STACK,
       fontSize: "18px",
       color: "#f4ecda",
       align: "center"
     }).setOrigin(0.5);
+    this.loadingText.setResolution(TEXT_RESOLUTION);
   }
 
   loadVisualAssets() {
@@ -128,29 +133,33 @@ class LoopScene extends Phaser.Scene {
     this.headerPanel.setStrokeStyle(1, 0xffffff, 0.06);
 
     this.lifeText = this.add.text(0, 0, "", {
-      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: UI_FONT_STACK,
       color: "#f4ecda"
     });
+    this.lifeText.setResolution(TEXT_RESOLUTION);
 
     this.statText = this.add.text(0, 0, "", {
-      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: UI_FONT_STACK,
       color: "#c8cfdf"
     });
+    this.statText.setResolution(TEXT_RESOLUTION);
 
     this.storyPanelShadow = this.add.rectangle(0, 0, 100, 100, 0x000000, 0.18);
     this.storyPanel = this.add.rectangle(0, 0, 100, 100, 0x14111d, 0.94);
     this.storyPanel.setStrokeStyle(1, 0xffffff, 0.07);
 
     this.storyText = this.add.text(0, 0, "", {
-      fontFamily: '"Iowan Old Style", Georgia, "Times New Roman", serif',
+      fontFamily: STORY_FONT_STACK,
       color: "#f7f3ea",
       lineSpacing: 8
     });
+    this.storyText.setResolution(TEXT_RESOLUTION);
 
-    this.choiceHint = this.add.text(0, 0, "Decision", {
-      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    this.choiceHint = this.add.text(0, 0, "DECISIONS", {
+      fontFamily: UI_FONT_STACK,
       color: "#bba978"
     });
+    this.choiceHint.setResolution(TEXT_RESOLUTION);
 
     this.divider = this.add.rectangle(0, 0, 100, 1, 0xffffff, 0.08).setOrigin(0, 0.5);
 
@@ -173,21 +182,33 @@ class LoopScene extends Phaser.Scene {
 
   bindInput() {
     this.input.on("wheel", (pointer, gameObjects, deltaX, deltaY) => {
-      if (this.choiceContentHeight > this.choiceViewportHeight) {
+      if (
+        this.choiceContentHeight > this.choiceViewportHeight &&
+        this.isPointInChoiceViewport(pointer.x, pointer.y)
+      ) {
         this.scrollChoices(deltaY * 0.9);
       }
     });
 
     this.input.on("pointerdown", (pointer) => {
-      if (this.isPointInChoiceViewport(pointer.x, pointer.y) && this.choiceContentHeight > this.choiceViewportHeight) {
+      if (
+        pointer.leftButtonDown() &&
+        this.isPointInChoiceViewport(pointer.x, pointer.y) &&
+        this.choiceContentHeight > this.choiceViewportHeight
+      ) {
         this.choicePointerDown = true;
+        this.activeChoicePointerId = pointer.id;
         this.lastDragY = pointer.y;
         this.dragStartY = pointer.y;
       }
     });
 
     this.input.on("pointermove", (pointer) => {
-      if (!this.choicePointerDown) {
+      if (
+        !this.choicePointerDown ||
+        this.activeChoicePointerId !== pointer.id ||
+        !pointer.isDown
+      ) {
         return;
       }
 
@@ -205,10 +226,11 @@ class LoopScene extends Phaser.Scene {
     });
 
     this.input.on("pointerup", () => {
-      this.choicePointerDown = false;
-      this.time.delayedCall(0, () => {
-        this.isDraggingChoices = false;
-      });
+      this.resetChoicePointerState();
+    });
+
+    this.input.on("pointerupoutside", () => {
+      this.resetChoicePointerState();
     });
   }
 
@@ -222,45 +244,56 @@ class LoopScene extends Phaser.Scene {
     const safeBottom = Phaser.Math.Clamp(height * 0.025, 16, 28);
     const headerHeight = Phaser.Math.Clamp(height * 0.095, 68, 96);
     const panelWidth = width - marginX * 2;
-    const panelHeight = Phaser.Math.Clamp(height * 0.45, 300, height * 0.54);
-    const panelTop = height - safeBottom - panelHeight;
     const panelPadding = Phaser.Math.Clamp(panelWidth * 0.065, 20, 30);
-    const heroAreaTop = safeTop + headerHeight + 12;
-    const heroAreaBottom = panelTop - 16;
-    const heroAreaHeight = Math.max(120, heroAreaBottom - heroAreaTop);
-    const baseFont = Phaser.Math.Clamp(width * 0.043, 15, 21);
-    const storyFont = Phaser.Math.Clamp(width * 0.05, 18, 26);
-    const choiceFont = Phaser.Math.Clamp(width * 0.043, 15, 20);
+    const labelFont = Phaser.Math.Clamp(width * 0.03, 11, 13);
+    const headerFont = Phaser.Math.Clamp(width * 0.043, 16, 20);
+    const metaFont = Phaser.Math.Clamp(width * 0.034, 13, 15);
+    const storyFont = Phaser.Math.Clamp(width * 0.043, 16, 19);
+    const choiceFont = Phaser.Math.Clamp(width * 0.039, 15, 17);
+    const choiceMetaFont = Phaser.Math.Clamp(width * 0.031, 12, 13);
+    const storyWidth = panelWidth - panelPadding * 2;
+    const minStoryHeight = Phaser.Math.Clamp(height * 0.14, 108, 170);
+    const minChoicesHeight = Phaser.Math.Clamp(height * 0.22, 150, 240);
+    const panelChromeHeight = 64;
+    const topReserved = safeTop + headerHeight + 18;
+    const maxPanelHeight = Math.max(
+      minStoryHeight + minChoicesHeight + panelPadding * 2 + panelChromeHeight,
+      height - safeBottom - topReserved
+    );
+    const minPanelHeight = Math.min(
+      maxPanelHeight,
+      Math.max(350, minStoryHeight + minChoicesHeight + panelPadding * 2 + panelChromeHeight)
+    );
 
     this.ui = {
       width,
       height,
       marginX,
       safeTop,
+      safeBottom,
+      headerHeight,
       panelWidth,
-      panelHeight,
-      panelTop,
       panelPadding,
-      baseFont,
+      labelFont,
+      headerFont,
+      metaFont,
       storyFont,
       choiceFont,
-      storyWidth: panelWidth - panelPadding * 2,
-      storyHeight: Phaser.Math.Clamp(panelHeight * 0.38, 110, 184),
+      choiceMetaFont,
+      storyWidth,
+      minStoryHeight,
+      minChoicesHeight,
+      panelChromeHeight,
+      minPanelHeight,
+      maxPanelHeight,
       choicesX: marginX + panelPadding,
-      choicesY: panelTop + panelPadding + Phaser.Math.Clamp(panelHeight * 0.38, 110, 184) + 56,
-      choicesWidth: panelWidth - panelPadding * 2,
-      choicesHeight: panelHeight - Phaser.Math.Clamp(panelHeight * 0.38, 110, 184) - panelPadding * 2 - 64,
-      heroCenterX: width / 2,
-      heroCenterY: heroAreaTop + heroAreaHeight * 0.8,
-      heroHeight: Phaser.Math.Clamp(heroAreaHeight * 0.95, 220, 410),
+      choicesWidth: storyWidth,
       heroShadowWidth: Phaser.Math.Clamp(width * 0.34, 112, 190),
-      heroShadowHeight: Phaser.Math.Clamp(height * 0.03, 18, 28),
-      heroHaloWidth: Phaser.Math.Clamp(width * 0.48, 160, 260),
-      heroHaloHeight: Phaser.Math.Clamp(heroAreaHeight * 0.8, 190, 340)
+      heroShadowHeight: Phaser.Math.Clamp(height * 0.03, 18, 28)
     };
 
     this.drawBackground();
-    this.layoutObjects();
+    this.layoutObjects(this.getCurrentNarrativeText());
     this.refreshCurrentView(true);
   }
 
@@ -284,78 +317,129 @@ class LoopScene extends Phaser.Scene {
     this.vignette.fillRect(0, 0, width, height);
   }
 
-  layoutObjects() {
+  layoutObjects(storyContent = "") {
     const {
       width,
+      height,
       marginX,
       safeTop,
+      safeBottom,
       headerHeight,
       panelWidth,
+      panelPadding,
+      labelFont,
+      headerFont,
+      metaFont,
+      storyFont,
+      storyWidth,
+      choicesX,
+      choicesWidth,
+      heroShadowWidth,
+      heroShadowHeight,
+      minStoryHeight,
+      minChoicesHeight,
+      panelChromeHeight,
+      minPanelHeight,
+      maxPanelHeight
+    } = this.ui;
+
+    this.storyText.setFontSize(storyFont);
+    this.storyText.setLineSpacing(Math.round(storyFont * 0.36));
+    this.storyText.setWordWrapWidth(storyWidth, true);
+    this.storyText.setFixedSize(0, 0);
+    this.storyText.setText(storyContent || " ");
+
+    const measuredStoryHeight = Math.ceil(this.storyText.height);
+    const maxStoryHeight = Math.max(
+      minStoryHeight,
+      maxPanelHeight - panelPadding * 2 - panelChromeHeight - minChoicesHeight
+    );
+    const storyHeight = Phaser.Math.Clamp(measuredStoryHeight, minStoryHeight, maxStoryHeight);
+    const preferredChoicesHeight = Phaser.Math.Clamp(height * 0.24, minChoicesHeight, 240);
+    const panelHeight = Phaser.Math.Clamp(
+      storyHeight + preferredChoicesHeight + panelPadding * 2 + panelChromeHeight,
+      minPanelHeight,
+      maxPanelHeight
+    );
+    const panelTop = height - safeBottom - panelHeight;
+    const choicesY = panelTop + panelPadding + storyHeight + 56;
+    const choicesHeight = Math.max(minChoicesHeight, panelHeight - storyHeight - panelPadding * 2 - panelChromeHeight);
+    const heroAreaTop = safeTop + headerHeight + 12;
+    const heroAreaBottom = panelTop - 16;
+    const heroAreaHeight = Math.max(96, heroAreaBottom - heroAreaTop);
+    const heroCenterX = width / 2;
+    const heroCenterY = heroAreaTop + heroAreaHeight * 0.8;
+    const heroHeight = Phaser.Math.Clamp(heroAreaHeight * 0.95, 160, 410);
+    const heroHaloWidth = Phaser.Math.Clamp(width * 0.48, 160, 260);
+    const heroHaloHeight = Phaser.Math.Clamp(heroAreaHeight * 0.8, 150, 340);
+
+    Object.assign(this.ui, {
       panelHeight,
       panelTop,
-      panelPadding,
-      baseFont,
-      storyFont,
-      choiceFont,
-      storyWidth,
       storyHeight,
-      choicesX,
       choicesY,
-      choicesWidth,
       choicesHeight,
       heroCenterX,
       heroCenterY,
       heroHeight,
-      heroShadowWidth,
-      heroShadowHeight,
       heroHaloWidth,
       heroHaloHeight
-    } = this.ui;
+    });
 
-    this.heroHalo.setPosition(heroCenterX, heroCenterY - heroHeight * 0.45);
+    this.heroHalo.setPosition(Math.round(heroCenterX), Math.round(heroCenterY - heroHeight * 0.45));
     this.heroHalo.setSize(heroHaloWidth, heroHaloHeight);
 
-    this.heroGlow.setPosition(heroCenterX, heroCenterY + 8);
+    this.heroGlow.setPosition(Math.round(heroCenterX), Math.round(heroCenterY + 8));
     this.heroGlow.setSize(heroShadowWidth, heroShadowHeight);
 
-    this.hero.setPosition(heroCenterX, heroCenterY);
+    this.hero.setPosition(Math.round(heroCenterX), Math.round(heroCenterY));
     this.hero.setScale(heroHeight / this.hero.height);
 
-    this.headerPanel.setPosition(width / 2, safeTop + headerHeight / 2);
+    this.headerPanel.setPosition(Math.round(width / 2), Math.round(safeTop + headerHeight / 2));
     this.headerPanel.setSize(panelWidth, headerHeight);
 
-    this.lifeText.setPosition(marginX + panelPadding, safeTop + 16);
-    this.lifeText.setFontSize(baseFont * 1.02);
+    this.lifeText.setPosition(Math.round(marginX + panelPadding), Math.round(safeTop + 16));
+    this.lifeText.setFontSize(headerFont);
+    this.lifeText.setColor("#f5ecdd");
 
-    this.statText.setPosition(marginX + panelPadding, safeTop + 16 + baseFont * 1.45);
-    this.statText.setFontSize(baseFont * 0.92);
+    this.statText.setPosition(Math.round(marginX + panelPadding), Math.round(safeTop + 18 + headerFont * 1.35));
+    this.statText.setFontSize(metaFont);
+    this.statText.setColor("#b6bdcf");
 
-    this.storyPanelShadow.setPosition(width / 2, panelTop + panelHeight / 2 + 8);
+    this.storyPanelShadow.setPosition(Math.round(width / 2), Math.round(panelTop + panelHeight / 2 + 8));
     this.storyPanelShadow.setSize(panelWidth, panelHeight);
 
-    this.storyPanel.setPosition(width / 2, panelTop + panelHeight / 2);
+    this.storyPanel.setPosition(Math.round(width / 2), Math.round(panelTop + panelHeight / 2));
     this.storyPanel.setSize(panelWidth, panelHeight);
 
-    this.storyText.setPosition(marginX + panelPadding, panelTop + panelPadding);
-    this.storyText.setFontSize(storyFont);
-    this.storyText.setLineSpacing(Math.round(storyFont * 0.44));
-    this.storyText.setWordWrapWidth(storyWidth, true);
+    this.storyText.setPosition(Math.round(marginX + panelPadding), Math.round(panelTop + panelPadding));
     this.storyText.setFixedSize(storyWidth, storyHeight);
 
-    this.choiceHint.setPosition(marginX + panelPadding, panelTop + panelPadding + storyHeight + 16);
-    this.choiceHint.setFontSize(baseFont * 0.74);
-    this.choiceHint.setAlpha(0.88);
-    this.choiceHint.setLetterSpacing(1.2);
+    this.choiceHint.setPosition(
+      Math.round(marginX + panelPadding),
+      Math.round(panelTop + panelPadding + storyHeight + 16)
+    );
+    this.choiceHint.setFontSize(labelFont);
+    this.choiceHint.setAlpha(0.78);
+    this.choiceHint.setLetterSpacing(2.4);
 
-    this.divider.setPosition(marginX + panelPadding, panelTop + panelPadding + storyHeight + 42);
+    this.divider.setPosition(
+      Math.round(marginX + panelPadding),
+      Math.round(panelTop + panelPadding + storyHeight + 42)
+    );
     this.divider.width = storyWidth;
 
     this.choiceViewportHeight = Math.max(74, choicesHeight);
-    this.choiceContainer.setPosition(choicesX, choicesY);
+    this.choiceContainer.setPosition(Math.round(choicesX), Math.round(choicesY));
 
     this.choiceMaskGraphics.clear();
     this.choiceMaskGraphics.fillStyle(0xffffff, 1);
-    this.choiceMaskGraphics.fillRect(choicesX, choicesY, choicesWidth, this.choiceViewportHeight);
+    this.choiceMaskGraphics.fillRect(
+      Math.round(choicesX),
+      Math.round(choicesY),
+      Math.round(choicesWidth),
+      Math.round(this.choiceViewportHeight)
+    );
   }
 
   beginLife() {
@@ -379,28 +463,40 @@ class LoopScene extends Phaser.Scene {
     this.refreshCurrentView(false);
   }
 
+  getCurrentNarrativeText() {
+    if (!this.currentEvent) {
+      return "";
+    }
+
+    if (!this.currentEvent.death) {
+      return this.currentEvent.text;
+    }
+
+    const carry = this.calculateCarryOver(this.currentStats);
+    return [
+      this.currentEvent.text,
+      "",
+      `End: ${this.currentEvent.deathLabel}`,
+      `Carry over: STR ${carry.strength}  INT ${carry.intellect}  CHA ${carry.charm}`
+    ].join("\n");
+  }
+
   refreshCurrentView(skipTyping = false) {
     if (!this.currentEvent || !this.storyText) {
       return;
     }
 
+    const narrativeText = this.getCurrentNarrativeText();
+    this.layoutObjects(narrativeText);
     this.clearChoices();
     this.renderStats();
 
     if (this.currentEvent.death) {
-      const carry = this.calculateCarryOver(this.currentStats);
-      const deathText = [
-        this.currentEvent.text,
-        "",
-        `End: ${this.currentEvent.deathLabel}`,
-        `Carry over: STR ${carry.strength}  INT ${carry.intellect}  CHA ${carry.charm}`
-      ].join("\n");
-
-      this.setStoryText(deathText, skipTyping, () => this.showDeathChoice());
+      this.setStoryText(narrativeText, skipTyping, () => this.showDeathChoice());
       return;
     }
 
-    this.setStoryText(this.currentEvent.text, skipTyping, () => this.showChoices(this.currentEvent.choices));
+    this.setStoryText(narrativeText, skipTyping, () => this.showChoices(this.currentEvent.choices));
   }
 
   setStoryText(text, skipTyping, onComplete) {
@@ -439,6 +535,7 @@ class LoopScene extends Phaser.Scene {
   }
 
   clearChoices() {
+    this.resetChoicePointerState();
     this.choiceNodes.forEach((node) => node.destroy());
     this.choiceNodes = [];
     this.choiceScrollY = 0;
@@ -491,22 +588,28 @@ class LoopScene extends Phaser.Scene {
     const inset = 16;
     const actionWidth = 82;
     const titleWidth = width - inset * 2 - actionWidth - 10;
+    const titleFontSize = this.ui.choiceFont;
+    const subtitleFontSize = this.ui.choiceMetaFont;
     const titleText = this.add.text(inset, 14, title, {
-      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      fontSize: `${this.ui.choiceFont}px`,
-      fontStyle: "600",
+      fontFamily: UI_FONT_STACK,
+      fontSize: `${titleFontSize}px`,
+      fontStyle: "bold",
       color: available ? "#f6f2ea" : "#a69cab",
       wordWrap: { width: titleWidth, useAdvancedWrap: true }
     });
+    titleText.setResolution(TEXT_RESOLUTION);
 
     const subtitleText = subtitle
       ? this.add.text(inset, titleText.y + titleText.height + 8, subtitle, {
-          fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-          fontSize: `${Math.max(12, this.ui.choiceFont * 0.72)}px`,
+          fontFamily: UI_FONT_STACK,
+          fontSize: `${subtitleFontSize}px`,
           color: available ? "#bdb4c5" : "#7f7587",
           wordWrap: { width: width - inset * 2, useAdvancedWrap: true }
         })
       : null;
+    if (subtitleText) {
+      subtitleText.setResolution(TEXT_RESOLUTION);
+    }
 
     const contentBottom = subtitleText
       ? subtitleText.y + subtitleText.height
@@ -528,11 +631,13 @@ class LoopScene extends Phaser.Scene {
     actionPill.setStrokeStyle(1, available ? 0x7c688d : 0x4f4458, 0.9);
 
     const actionText = this.add.text(actionPill.x + actionWidth / 2, actionPill.y + 14, actionLabel, {
-      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      fontSize: `${Math.max(11, this.ui.choiceFont * 0.66)}px`,
+      fontFamily: UI_FONT_STACK,
+      fontSize: `${subtitleFontSize}px`,
+      fontStyle: "bold",
       color: available ? "#efe4cf" : "#988e99"
     }).setOrigin(0.5);
-    actionText.setLetterSpacing(0.8);
+    actionText.setResolution(TEXT_RESOLUTION);
+    actionText.setLetterSpacing(0.9);
 
     container.add([shadow, card, accent, actionPill, actionText, titleText]);
     if (subtitleText) {
@@ -548,6 +653,10 @@ class LoopScene extends Phaser.Scene {
         this.setChoiceCardState(container, "pressed");
       });
       hitArea.on("pointerup", () => {
+        if (this.isDraggingChoices) {
+          this.setChoiceCardState(container, "idle");
+          return;
+        }
         this.setChoiceCardState(container, "hover");
         onPress();
       });
@@ -693,6 +802,16 @@ class LoopScene extends Phaser.Scene {
   scrollChoices(delta) {
     this.choiceScrollY = Phaser.Math.Clamp(this.choiceScrollY + delta, 0, this.getMaxChoiceScroll());
     this.applyChoiceScroll();
+  }
+
+  resetChoicePointerState() {
+    this.choicePointerDown = false;
+    this.activeChoicePointerId = null;
+    this.lastDragY = 0;
+    this.dragStartY = 0;
+    this.time.delayedCall(0, () => {
+      this.isDraggingChoices = false;
+    });
   }
 
   applyChoiceScroll() {
