@@ -20,12 +20,12 @@ class LoopScene extends Phaser.Scene {
   }
 
   preload() {
-    this.createHeroTextures();
+    this.load.image("bg-scene", "bg.webp");
+    this.load.image("hero-portrait", "character.webp");
   }
 
   create() {
     this.loadProgress();
-    this.createAnimations();
     this.createObjects();
     this.bindInput();
     this.scale.on("resize", this.handleResize, this);
@@ -34,48 +34,6 @@ class LoopScene extends Phaser.Scene {
   }
 
   update() {}
-
-  createHeroTextures() {
-    for (let frame = 0; frame < 4; frame += 1) {
-      const graphics = this.make.graphics({ x: 0, y: 0, add: false });
-      const bodyOffset = frame % 2 === 0 ? 0 : 1;
-      const armOffset = frame === 1 ? 1 : frame === 3 ? -1 : 0;
-
-      graphics.fillStyle(0x000000, 1);
-      graphics.fillRect(10, 2, 12, 2);
-
-      graphics.fillStyle(0xf1c69a, 1);
-      graphics.fillRect(10, 4, 12, 10);
-
-      graphics.fillStyle(0x30243c, 1);
-      graphics.fillRect(8, 2, 16, 4);
-      graphics.fillRect(8, 6, 2, 4);
-      graphics.fillRect(22, 6, 2, 4);
-
-      graphics.fillStyle(0xffffff, 1);
-      graphics.fillRect(13, 8, 2, 2);
-      graphics.fillRect(17, 8, 2, 2);
-      graphics.fillStyle(0x18111d, 1);
-      graphics.fillRect(14, 8, 1, 1);
-      graphics.fillRect(18, 8, 1, 1);
-
-      graphics.fillStyle(0x7f5fa1, 1);
-      graphics.fillRect(9, 14, 14, 10);
-      graphics.fillRect(11, 24, 4, 6);
-      graphics.fillRect(17, 24, 4, 6);
-
-      graphics.fillStyle(0xd8b385, 1);
-      graphics.fillRect(8 + armOffset, 15, 2, 8);
-      graphics.fillRect(22 + armOffset, 15, 2, 8);
-
-      graphics.fillStyle(0x5672a0, 1);
-      graphics.fillRect(11, 30 - bodyOffset, 4, 2);
-      graphics.fillRect(17, 28 + bodyOffset, 4, 2);
-
-      graphics.generateTexture(`hero-${frame}`, 32, 32);
-      graphics.destroy();
-    }
-  }
 
   loadProgress() {
     try {
@@ -111,23 +69,13 @@ class LoopScene extends Phaser.Scene {
     );
   }
 
-  createAnimations() {
-    if (!this.anims.exists("hero-idle")) {
-      this.anims.create({
-        key: "hero-idle",
-        frames: [{ key: "hero-0" }, { key: "hero-1" }, { key: "hero-2" }, { key: "hero-3" }],
-        frameRate: 5,
-        repeat: -1
-      });
-    }
-  }
-
   createObjects() {
-    this.background = this.add.graphics();
+    this.background = this.add.image(0, 0, "bg-scene").setOrigin(0.5);
+    this.backgroundShade = this.add.graphics();
     this.vignette = this.add.graphics();
-
+    this.heroHalo = this.add.ellipse(0, 0, 100, 100, 0xd6d8ff, 0.12);
     this.heroGlow = this.add.ellipse(0, 0, 100, 40, 0x000000, 0.18);
-    this.hero = this.add.sprite(0, 0, "hero-0").play("hero-idle");
+    this.hero = this.add.image(0, 0, "hero-portrait").setOrigin(0.5, 1);
 
     this.headerPanel = this.add.rectangle(0, 0, 100, 50, 0x121019, 0.72);
     this.headerPanel.setStrokeStyle(1, 0xffffff, 0.06);
@@ -165,13 +113,14 @@ class LoopScene extends Phaser.Scene {
     this.choiceContainer.setMask(this.choiceMask);
 
     this.tweens.add({
-      targets: this.hero,
-      y: "+=8",
-      duration: 1200,
+      targets: [this.hero, this.heroHalo],
+      y: "+=7",
+      duration: 2200,
       yoyo: true,
       repeat: -1,
       ease: "Sine.easeInOut"
     });
+
   }
 
   bindInput() {
@@ -254,10 +203,12 @@ class LoopScene extends Phaser.Scene {
       choicesWidth: panelWidth - panelPadding * 2,
       choicesHeight: panelHeight - Phaser.Math.Clamp(panelHeight * 0.38, 110, 184) - panelPadding * 2 - 64,
       heroCenterX: width / 2,
-      heroCenterY: heroAreaTop + heroAreaHeight * 0.58,
-      heroScale: Math.max(3, Math.round(Phaser.Math.Clamp(width / 92, 3, 5))),
-      heroShadowWidth: Phaser.Math.Clamp(width * 0.26, 92, 148),
-      heroShadowHeight: Phaser.Math.Clamp(height * 0.028, 18, 26)
+      heroCenterY: heroAreaTop + heroAreaHeight * 0.8,
+      heroHeight: Phaser.Math.Clamp(heroAreaHeight * 0.95, 220, 410),
+      heroShadowWidth: Phaser.Math.Clamp(width * 0.34, 112, 190),
+      heroShadowHeight: Phaser.Math.Clamp(height * 0.03, 18, 28),
+      heroHaloWidth: Phaser.Math.Clamp(width * 0.48, 160, 260),
+      heroHaloHeight: Phaser.Math.Clamp(heroAreaHeight * 0.8, 190, 340)
     };
 
     this.drawBackground();
@@ -267,49 +218,19 @@ class LoopScene extends Phaser.Scene {
 
   drawBackground() {
     const { width, height } = this.ui;
-    this.background.clear();
+    const scale = Math.max(width / this.background.width, height / this.background.height);
+    this.background.setPosition(width / 2, height / 2);
+    this.background.setScale(scale);
+
+    this.backgroundShade.clear();
     this.vignette.clear();
 
-    this.background.fillGradientStyle(0x13101b, 0x13101b, 0x1e1a29, 0x251d31, 1);
-    this.background.fillRect(0, 0, width, height);
-
-    this.background.fillStyle(0x2f2741, 1);
-    this.background.fillRoundedRect(width * 0.08, height * 0.12, width * 0.84, height * 0.26, 28);
-
-    this.background.fillStyle(0x221d2f, 1);
-    for (let i = 0; i < 7; i += 1) {
-      const x = (i / 6) * width;
-      const w = width * 0.22;
-      const h = height * (0.18 + (i % 3) * 0.035);
-      this.background.fillRect(x - w * 0.5, height * 0.25 - h * 0.12, w, h);
-    }
-
-    this.background.fillStyle(0x54436f, 1);
-    this.background.fillCircle(width * 0.76, height * 0.13, Math.min(width, height) * 0.06);
-
-    this.background.fillStyle(0x26351f, 1);
-    this.background.fillRect(0, height * 0.52, width, height * 0.16);
-
-    this.background.fillStyle(0x324826, 1);
-    for (let y = height * 0.52; y < height * 0.68; y += 10) {
-      for (let x = 0; x < width; x += 10) {
-        if (((x + y) / 10) % 2 === 0) {
-          this.background.fillRect(x, y, 10, 10);
-        }
-      }
-    }
-
-    this.background.fillStyle(0x18141f, 1);
-    this.background.fillRect(0, height * 0.68, width, height * 0.32);
-
-    const stars = [
-      [0.12, 0.09], [0.26, 0.06], [0.42, 0.1], [0.56, 0.08], [0.68, 0.06], [0.86, 0.1]
-    ];
-
-    this.background.fillStyle(0xf0e3b0, 0.85);
-    stars.forEach(([x, y]) => {
-      this.background.fillRect(width * x, height * y, 3, 3);
-    });
+    this.backgroundShade.fillGradientStyle(0x0f0e16, 0x0f0e16, 0x18151f, 0x19141f, 0.12, 0.08, 0.28, 0.64);
+    this.backgroundShade.fillRect(0, 0, width, height);
+    this.backgroundShade.fillStyle(0xffffff, 0.04);
+    this.backgroundShade.fillEllipse(width * 0.5, height * 0.56, width * 0.92, height * 0.18);
+    this.backgroundShade.fillStyle(0xdcd8ff, 0.06);
+    this.backgroundShade.fillEllipse(width * 0.5, height * 0.28, width * 0.48, height * 0.2);
 
     this.vignette.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0.14, 0.04, 0.18, 0.24);
     this.vignette.fillRect(0, 0, width, height);
@@ -336,16 +257,21 @@ class LoopScene extends Phaser.Scene {
       choicesHeight,
       heroCenterX,
       heroCenterY,
-      heroScale,
+      heroHeight,
       heroShadowWidth,
-      heroShadowHeight
+      heroShadowHeight,
+      heroHaloWidth,
+      heroHaloHeight
     } = this.ui;
 
-    this.heroGlow.setPosition(heroCenterX, heroCenterY + heroScale * 54);
+    this.heroHalo.setPosition(heroCenterX, heroCenterY - heroHeight * 0.45);
+    this.heroHalo.setSize(heroHaloWidth, heroHaloHeight);
+
+    this.heroGlow.setPosition(heroCenterX, heroCenterY + 8);
     this.heroGlow.setSize(heroShadowWidth, heroShadowHeight);
 
     this.hero.setPosition(heroCenterX, heroCenterY);
-    this.hero.setScale(heroScale);
+    this.hero.setScale(heroHeight / this.hero.height);
 
     this.headerPanel.setPosition(width / 2, safeTop + headerHeight / 2);
     this.headerPanel.setSize(panelWidth, headerHeight);
