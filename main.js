@@ -18,6 +18,16 @@ const CHOICE_WHEEL_SPEED = 0.9;
 const TYPEWRITER_DELAY = 12;
 const HERO_FLOAT_OFFSET = 7;
 const HERO_FLOAT_DURATION = 2200;
+const VIEW_FADE_DURATION = 220;
+const CHOICE_TRANSITION_DELAY = 140;
+const REINCARNATE_DELAY = 520;
+
+const FEEDBACK_COLORS = Object.freeze({
+  warm: 0xd8b37a,
+  cool: 0xaebde4,
+  death: 0x5c2f3d,
+  rebirth: 0xd9c596
+});
 
 class LoopScene extends Phaser.Scene {
   constructor() {
@@ -56,6 +66,7 @@ class LoopScene extends Phaser.Scene {
     this.dragStartY = 0;
 
     this.isTyping = false;
+    this.isTransitioning = false;
     this.ui = {};
   }
 
@@ -141,6 +152,7 @@ class LoopScene extends Phaser.Scene {
     this.createHeaderObjects();
     this.createStoryObjects();
     this.createChoiceObjects();
+    this.createFeedbackObjects();
     this.createAmbientTweens();
   }
 
@@ -193,6 +205,24 @@ class LoopScene extends Phaser.Scene {
     this.choiceMaskGraphics = this.make.graphics({ x: 0, y: 0, add: false });
     this.choiceMask = this.choiceMaskGraphics.createGeometryMask();
     this.choiceContainer.setMask(this.choiceMask);
+  }
+
+  createFeedbackObjects() {
+    this.transitionVeil = this.add.rectangle(0, 0, 10, 10, FEEDBACK_COLORS.cool, 0).setOrigin(0, 0);
+    this.transitionVeil.setDepth(60);
+
+    this.statusBanner = this.createText(0, 0, "", {
+      fontFamily: UI_FONT_STACK,
+      fontSize: "16px",
+      fontStyle: "bold",
+      color: "#f8f1df",
+      align: "center"
+    }).setOrigin(0.5);
+    this.statusBanner.setDepth(70);
+    this.statusBanner.setAlpha(0);
+
+    this.statEchoLayer = this.add.container(0, 0);
+    this.statEchoLayer.setDepth(65);
   }
 
   createAmbientTweens() {
@@ -270,7 +300,7 @@ class LoopScene extends Phaser.Scene {
 
     this.drawBackground();
     this.layoutScene(this.getCurrentNarrativeText());
-    this.refreshCurrentView(true);
+    this.refreshCurrentView(true, { suppressEventFeedback: true });
   }
 
   buildResponsiveMetrics(gameSize) {
@@ -357,6 +387,7 @@ class LoopScene extends Phaser.Scene {
     this.layoutHeader();
     this.layoutStoryPanel();
     this.layoutChoiceViewport();
+    this.layoutFeedback();
   }
 
   measurePanelLayout(storyContent) {
@@ -490,14 +521,21 @@ class LoopScene extends Phaser.Scene {
     );
   }
 
+  layoutFeedback() {
+    const { width, height, panelTop } = this.ui;
+    this.transitionVeil.setSize(width, height);
+    this.transitionVeil.setPosition(0, 0);
+    this.statusBanner.setPosition(this.round(width / 2), this.round(Math.max(88, panelTop - 26)));
+  }
+
   beginLife() {
     this.currentStats = { ...this.baseStats };
     this.showEvent("start");
   }
 
-  showEvent(eventId) {
+  showEvent(eventId, options = {}) {
     this.currentEvent = this.getEventById(eventId);
-    this.refreshCurrentView(false);
+    this.refreshCurrentView(false, options);
   }
 
   getEventById(eventId) {
@@ -522,7 +560,7 @@ class LoopScene extends Phaser.Scene {
     ].join("\n");
   }
 
-  refreshCurrentView(skipTyping = false) {
+  refreshCurrentView(skipTyping = false, options = {}) {
     if (!this.currentEvent || !this.storyText) {
       return;
     }
@@ -531,12 +569,16 @@ class LoopScene extends Phaser.Scene {
     this.layoutScene(narrativeText);
     this.clearChoices();
     this.renderStats();
+    this.animateNarrativeEntrance();
 
     const onComplete = this.currentEvent.death
       ? () => this.showDeathChoice()
       : () => this.showChoices(this.currentEvent.choices);
 
     this.setStoryText(narrativeText, skipTyping, onComplete);
+    if (!options.suppressEventFeedback) {
+      this.playEventFeedback(this.currentEvent);
+    }
   }
 
   renderStats() {
@@ -592,6 +634,7 @@ class LoopScene extends Phaser.Scene {
     this.choiceNodes = [];
     this.choiceScrollY = 0;
     this.choiceContentHeight = 0;
+    this.choiceContainer.alpha = 1;
     this.applyChoiceScroll();
   }
 
@@ -616,6 +659,7 @@ class LoopScene extends Phaser.Scene {
 
     this.choiceContentHeight = Math.max(0, offsetY - CHOICE_GAP);
     this.applyChoiceScroll();
+    this.animateChoicesEntrance();
   }
 
   showDeathChoice() {
@@ -632,6 +676,7 @@ class LoopScene extends Phaser.Scene {
     this.choiceNodes.push(button);
     this.choiceContentHeight = button.cardHeight;
     this.applyChoiceScroll();
+    this.animateChoicesEntrance();
   }
 
   getChoiceLabel(choice, available) {
@@ -864,12 +909,18 @@ class LoopScene extends Phaser.Scene {
   }
 
   pickChoice(choice) {
-    if (!this.canChoose(choice) || this.isTyping || this.isDraggingChoices) {
+    if (!this.canChoose(choice) || this.isTyping || this.isDraggingChoices || this.isTransitioning) {
       return;
     }
 
-    this.currentStats = this.applyEffects(this.currentStats, choice.effects || {});
-    this.showEvent(choice.next);
+    const previousStats = { ...this.currentStats };
+    const nextStats = this.applyEffects(this.currentStats, choice.effects || {});
+    const statDelta = this.getStatDelta(previousStats, nextStats);
+
+    this.currentStats = nextStats;
+    this.renderStats();
+    this.playChoiceFeedback(statDelta);
+    this.transitionToEvent(choice.next);
   }
 
   applyEffects(stats, effects) {
@@ -892,7 +943,7 @@ class LoopScene extends Phaser.Scene {
     this.baseStats = this.calculateCarryOver(this.currentStats);
     this.lifeNumber += 1;
     this.saveProgress();
-    this.beginLife();
+    this.playReincarnationFeedback(() => this.beginLife());
   }
 
   getMaxChoiceScroll() {
@@ -942,6 +993,251 @@ class LoopScene extends Phaser.Scene {
     const text = this.add.text(x, y, value, style);
     text.setResolution(TEXT_RESOLUTION);
     return text;
+  }
+
+  animateNarrativeEntrance() {
+    this.storyPanel.alpha = 0.94;
+    this.storyPanelShadow.alpha = 0.1;
+    this.storyText.alpha = 0.3;
+    this.choiceHint.alpha = 0.2;
+    this.divider.alpha = 0.04;
+
+    this.tweens.add({
+      targets: this.storyText,
+      alpha: 1,
+      duration: VIEW_FADE_DURATION
+    });
+
+    this.tweens.add({
+      targets: this.storyPanelShadow,
+      alpha: 1,
+      duration: VIEW_FADE_DURATION
+    });
+
+    this.tweens.add({
+      targets: this.choiceHint,
+      alpha: 0.78,
+      duration: VIEW_FADE_DURATION
+    });
+
+    this.tweens.add({
+      targets: this.divider,
+      alpha: 0.08,
+      duration: VIEW_FADE_DURATION
+    });
+  }
+
+  animateChoicesEntrance() {
+    const baseY = this.ui.choicesY - this.choiceScrollY;
+    this.choiceContainer.alpha = 0;
+    this.choiceContainer.y = baseY + 10;
+
+    this.tweens.add({
+      targets: this.choiceContainer,
+      alpha: 1,
+      y: baseY,
+      duration: VIEW_FADE_DURATION,
+      ease: "Quad.out"
+    });
+  }
+
+  playChoiceFeedback(statDelta) {
+    this.pulseHeroHalo(FEEDBACK_COLORS.warm, 0.2);
+    this.pulsePanelGlow(FEEDBACK_COLORS.warm, 0.12);
+    this.playVeilPulse(FEEDBACK_COLORS.warm, 0.06, 180);
+
+    if (this.hasStatDelta(statDelta)) {
+      this.playStatChangeFeedback(statDelta);
+    }
+  }
+
+  playStatChangeFeedback(statDelta) {
+    const label = this.formatStatDelta(statDelta);
+    if (!label) {
+      return;
+    }
+
+    const echo = this.createText(this.lifeText.x, this.statText.y - 14, label, {
+      fontFamily: UI_FONT_STACK,
+      fontSize: `${this.ui.metaFont}px`,
+      fontStyle: "bold",
+      color: "#f4dfb9"
+    });
+    echo.setDepth(66);
+    this.statEchoLayer.add(echo);
+
+    this.tweens.add({
+      targets: echo,
+      y: echo.y - 22,
+      alpha: 0,
+      duration: 900,
+      ease: "Sine.out",
+      onComplete: () => echo.destroy()
+    });
+
+    this.tweens.add({
+      targets: [this.lifeText, this.statText],
+      scaleX: 1.035,
+      scaleY: 1.035,
+      duration: 130,
+      yoyo: true,
+      ease: "Quad.out"
+    });
+  }
+
+  playEventFeedback(event) {
+    if (!event?.death) {
+      return;
+    }
+
+    this.pulseHeroHalo(FEEDBACK_COLORS.death, 0.24);
+    this.pulsePanelGlow(FEEDBACK_COLORS.death, 0.14);
+    this.playVeilPulse(FEEDBACK_COLORS.death, 0.16, 520);
+    this.showStatusBanner(`Life ${this.lifeNumber} Ends`, "#e9c6c8");
+  }
+
+  playReincarnationFeedback(onComplete) {
+    this.isTransitioning = true;
+    this.pulseHeroHalo(FEEDBACK_COLORS.rebirth, 0.28);
+    this.playVeilPulse(FEEDBACK_COLORS.rebirth, 0.2, REINCARNATE_DELAY);
+    this.showStatusBanner(`Life ${this.lifeNumber} Rekindled`, "#f5ebc8", REINCARNATE_DELAY);
+
+    this.tweens.add({
+      targets: [this.hero, this.storyPanel, this.choiceContainer],
+      alpha: 0.78,
+      duration: 180,
+      yoyo: true,
+      ease: "Sine.inOut"
+    });
+
+    this.time.delayedCall(REINCARNATE_DELAY, () => {
+      this.isTransitioning = false;
+      if (onComplete) {
+        onComplete();
+      }
+    });
+  }
+
+  transitionToEvent(eventId) {
+    this.isTransitioning = true;
+
+    this.tweens.add({
+      targets: [this.storyText, this.choiceContainer, this.choiceHint, this.divider],
+      alpha: 0.45,
+      duration: 110,
+      yoyo: true,
+      ease: "Sine.inOut"
+    });
+
+    this.time.delayedCall(CHOICE_TRANSITION_DELAY, () => {
+      this.isTransitioning = false;
+      this.showEvent(eventId);
+    });
+  }
+
+  showStatusBanner(text, color = "#f8f1df", hold = 1200) {
+    this.statusBanner.setText(text);
+    this.statusBanner.setColor(color);
+    this.statusBanner.setAlpha(0);
+    this.statusBanner.setScale(0.96);
+    this.statusBanner.setY(this.round(Math.max(88, this.ui.panelTop - 26)));
+
+    this.tweens.add({
+      targets: this.statusBanner,
+      alpha: 1,
+      scaleX: 1,
+      scaleY: 1,
+      duration: 220,
+      ease: "Quad.out",
+      yoyo: false
+    });
+
+    this.time.delayedCall(hold, () => {
+      this.tweens.add({
+        targets: this.statusBanner,
+        alpha: 0,
+        y: this.statusBanner.y - 8,
+        duration: 340,
+        ease: "Sine.out",
+        onComplete: () => {
+          this.statusBanner.y = this.round(Math.max(88, this.ui.panelTop - 26));
+        }
+      });
+    });
+  }
+
+  playVeilPulse(color, peakAlpha, duration) {
+    this.transitionVeil.setFillStyle(color, peakAlpha);
+    this.transitionVeil.alpha = 0;
+
+    this.tweens.add({
+      targets: this.transitionVeil,
+      alpha: 1,
+      duration: duration * 0.35,
+      yoyo: true,
+      ease: "Sine.inOut"
+    });
+  }
+
+  pulseHeroHalo(color, alpha) {
+    const originalFill = this.heroHalo.fillColor;
+    const originalAlpha = this.heroHalo.fillAlpha;
+    this.heroHalo.setFillStyle(color, alpha);
+
+    this.tweens.add({
+      targets: this.heroHalo,
+      scaleX: 1.06,
+      scaleY: 1.06,
+      duration: 220,
+      yoyo: true,
+      ease: "Sine.out",
+      onComplete: () => {
+        this.heroHalo.setScale(1);
+        this.heroHalo.setFillStyle(originalFill, originalAlpha);
+      }
+    });
+  }
+
+  pulsePanelGlow(color, alpha) {
+    this.storyPanel.setStrokeStyle(1, color, alpha);
+    this.tweens.add({
+      targets: this.storyPanel,
+      scaleX: 1.005,
+      scaleY: 1.005,
+      duration: 160,
+      yoyo: true,
+      ease: "Sine.inOut",
+      onComplete: () => {
+        this.storyPanel.setScale(1);
+        this.storyPanel.setStrokeStyle(1, 0xffffff, 0.07);
+      }
+    });
+  }
+
+  getStatDelta(previousStats, nextStats) {
+    return {
+      strength: nextStats.strength - previousStats.strength,
+      intellect: nextStats.intellect - previousStats.intellect,
+      charm: nextStats.charm - previousStats.charm
+    };
+  }
+
+  hasStatDelta(statDelta) {
+    return Object.values(statDelta).some((value) => value !== 0);
+  }
+
+  formatStatDelta(statDelta) {
+    const labels = [];
+    if (statDelta.strength) {
+      labels.push(`${statDelta.strength > 0 ? "+" : ""}${statDelta.strength} STR`);
+    }
+    if (statDelta.intellect) {
+      labels.push(`${statDelta.intellect > 0 ? "+" : ""}${statDelta.intellect} INT`);
+    }
+    if (statDelta.charm) {
+      labels.push(`${statDelta.charm > 0 ? "+" : ""}${statDelta.charm} CHA`);
+    }
+    return labels.join("   ");
   }
 
   round(value) {
