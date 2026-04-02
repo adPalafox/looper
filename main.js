@@ -6,7 +6,7 @@ const STORY_FONT_STACK = '"Baskerville", "Iowan Old Style", Georgia, serif';
 
 const DEFAULT_STATS = Object.freeze({ strength: 1, intellect: 1, charm: 1 });
 const LOAD_ERROR_TEXT = [
-  "Unable to load bg.webp or character.webp.",
+  "Unable to load bg.webp or character_50.webp.",
   "If you opened this with file://, run a local server",
   "or refresh after the files finish loading."
 ].join("\n");
