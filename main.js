@@ -101,6 +101,38 @@ function getAdaptiveTextResolution(width = window.innerWidth, devicePixelRatio =
   return Math.min(2, Math.max(1.25, devicePixelRatio));
 }
 
+function paginateNarrativeText(text, idealLength = 320) {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return [""];
+  }
+
+  if (normalized.length <= idealLength) {
+    return [normalized];
+  }
+
+  const sentences = normalized.split(/(?<=[.!?])\s+/);
+  const pages = [];
+  let currentPage = "";
+
+  sentences.forEach((sentence) => {
+    const nextPage = currentPage ? `${currentPage} ${sentence}` : sentence;
+    if (nextPage.length > idealLength && currentPage) {
+      pages.push(currentPage);
+      currentPage = sentence;
+      return;
+    }
+
+    currentPage = nextPage;
+  });
+
+  if (currentPage) {
+    pages.push(currentPage);
+  }
+
+  return pages.length ? pages : [normalized];
+}
+
 function getPosthogConfig() {
   return window.POSTHOG_CONFIG || {};
 }
@@ -219,6 +251,8 @@ const analytics = {
       trait_ids: Object.keys(scene.traits).sort(),
       flags_count: Object.keys(scene.flags).length,
       seen_before: scene.currentEventSeenBefore,
+      story_page_index: scene.currentEventPageIndex + 1,
+      story_page_count: scene.currentEventPages.length || 1,
       is_mobile: window.matchMedia("(max-width: 768px)").matches,
       viewport_width: Math.round(window.innerWidth),
       ...extra
@@ -298,7 +332,10 @@ class LoopScene extends Phaser.Scene {
 
     this.currentEvent = null;
     this.currentEventSeenBefore = false;
+    this.currentEventPages = [];
+    this.currentEventPageIndex = 0;
     this.currentNarrativeText = "";
+    this.currentChoiceMode = "choices";
     this.typeEvent = null;
     this.storyCompleteCallback = null;
     this.currentTypingDelay = TYPEWRITER_DELAY;
@@ -430,12 +467,12 @@ class LoopScene extends Phaser.Scene {
     this.background = this.add.image(0, 0, "bg-scene").setOrigin(0.5);
     this.backgroundShade = this.add.graphics();
     this.vignette = this.add.graphics();
+    this.heroRig = this.add.container(0, 0);
     this.heroHalo = this.add.ellipse(0, 0, 100, 100, 0xd6d8ff, 0.12);
     this.heroGlow = this.add.ellipse(0, 0, 100, 40, 0x000000, 0.18);
     this.hero = this.add.image(0, 0, "hero-portrait").setOrigin(0.5, 1);
-    this.hero.setDepth(2);
-    this.heroHalo.setDepth(1);
-    this.heroGlow.setDepth(1);
+    this.heroRig.add([this.heroHalo, this.heroGlow, this.hero]);
+    this.heroRig.setDepth(2);
   }
 
   createHeaderObjects() {
@@ -595,7 +632,7 @@ class LoopScene extends Phaser.Scene {
 
   createAmbientTweens() {
     this.tweens.add({
-      targets: [this.hero, this.heroHalo],
+      targets: this.heroRig,
       y: `+=${HERO_FLOAT_OFFSET}`,
       duration: HERO_FLOAT_DURATION,
       yoyo: true,
@@ -789,10 +826,9 @@ class LoopScene extends Phaser.Scene {
       storyFont,
       storyWidth,
       minStoryHeight,
-      minChoicesHeight,
       panelChromeHeight,
-      minPanelHeight,
-      maxPanelHeight
+      maxPanelHeight,
+      height: viewportHeight
     } = this.ui;
 
     this.storyText.setFontSize(storyFont);
@@ -802,27 +838,26 @@ class LoopScene extends Phaser.Scene {
     this.storyText.setText(storyContent || " ");
 
     const measuredStoryHeight = Math.ceil(this.storyText.height);
+    const choiceAreaHeight = this.getChoiceAreaHeight(viewportHeight);
+    const panelMinHeight = this.getPanelMinHeight(minStoryHeight, choiceAreaHeight, panelPadding, panelChromeHeight);
     const maxStoryHeight = Math.max(
       minStoryHeight,
-      maxPanelHeight - panelPadding * 2 - panelChromeHeight - minChoicesHeight
+      maxPanelHeight - panelPadding * 2 - panelChromeHeight - choiceAreaHeight
     );
     const storyHeight = Phaser.Math.Clamp(measuredStoryHeight, minStoryHeight, maxStoryHeight);
-    const preferredChoicesHeight = Phaser.Math.Clamp(height * 0.24, minChoicesHeight, 240);
     const panelHeight = Phaser.Math.Clamp(
-      storyHeight + preferredChoicesHeight + panelPadding * 2 + panelChromeHeight,
-      minPanelHeight,
+      storyHeight + choiceAreaHeight + panelPadding * 2 + panelChromeHeight,
+      panelMinHeight,
       maxPanelHeight
     );
     const panelTop = height - safeBottom - panelHeight;
     const choicesY = panelTop + panelPadding + storyHeight + 56;
-    const choicesHeight = Math.max(
-      minChoicesHeight,
-      panelHeight - storyHeight - panelPadding * 2 - panelChromeHeight
-    );
+    const choicesHeight = panelHeight - storyHeight - panelPadding * 2 - panelChromeHeight;
 
-    const heroAreaTop = safeTop + headerHeight + 12;
-    const heroAreaBottom = panelTop - 16;
-    const heroAreaHeight = Math.max(96, heroAreaBottom - heroAreaTop);
+    const heroZoneTop = safeTop + headerHeight + 48;
+    const heroZoneBottom = Math.max(heroZoneTop + 140, panelTop - 64);
+    const heroAreaHeight = Phaser.Math.Clamp(heroZoneBottom - heroZoneTop, 150, 240);
+    const heroCenterY = heroZoneTop + heroAreaHeight;
 
     return {
       panelHeight,
@@ -831,24 +866,51 @@ class LoopScene extends Phaser.Scene {
       choicesY,
       choicesHeight,
       heroCenterX: width / 2,
-      heroCenterY: heroAreaTop + heroAreaHeight * 0.92,
+      heroCenterY,
       heroScale: HERO_BASE_SCALE,
       heroHaloWidth: Phaser.Math.Clamp(width * 0.48, 160, 260),
       heroHaloHeight: Phaser.Math.Clamp(heroAreaHeight * 0.8, 150, 340)
     };
   }
 
+  getChoiceAreaHeight(viewportHeight) {
+    if (this.currentChoiceMode === "continue") {
+      return 78;
+    }
+
+    if (this.currentChoiceMode === "death") {
+      const hasFeedbackChoice = Boolean(getPosthogConfig().feedbackUrl);
+      return hasFeedbackChoice ? 156 : 84;
+    }
+
+    const minChoicesHeight = Phaser.Math.Clamp(viewportHeight * 0.22, 150, 240);
+    return Phaser.Math.Clamp(viewportHeight * 0.24, minChoicesHeight, 240);
+  }
+
+  getPanelMinHeight(minStoryHeight, choiceAreaMinHeight, panelPadding, panelChromeHeight) {
+    if (this.currentChoiceMode === "continue") {
+      return minStoryHeight + choiceAreaMinHeight + panelPadding * 2 + panelChromeHeight - 56;
+    }
+
+    if (this.currentChoiceMode === "death") {
+      return minStoryHeight + choiceAreaMinHeight + panelPadding * 2 + panelChromeHeight - 20;
+    }
+
+    return Math.max(350, minStoryHeight + choiceAreaMinHeight + panelPadding * 2 + panelChromeHeight);
+  }
+
   layoutHero() {
     const { heroCenterX, heroCenterY, heroScale, heroHaloWidth, heroHaloHeight, heroShadowWidth, heroShadowHeight } = this.ui;
 
-    this.heroHalo.setPosition(this.round(heroCenterX), this.round(heroCenterY - this.hero.displayHeight * 0.38));
+    this.heroRig.setPosition(this.round(heroCenterX), this.round(heroCenterY));
+    this.hero.setScale(heroScale);
+    this.hero.setPosition(0, 0);
+
+    this.heroHalo.setPosition(0, this.round(-this.hero.displayHeight * 0.38));
     this.heroHalo.setSize(heroHaloWidth, heroHaloHeight);
 
-    this.heroGlow.setPosition(this.round(heroCenterX), this.round(heroCenterY + 8));
+    this.heroGlow.setPosition(0, 8);
     this.heroGlow.setSize(heroShadowWidth, heroShadowHeight);
-
-    this.hero.setPosition(this.round(heroCenterX), this.round(heroCenterY));
-    this.hero.setScale(heroScale);
   }
 
   layoutHeader() {
@@ -989,6 +1051,8 @@ class LoopScene extends Phaser.Scene {
   showEvent(eventId, options = {}) {
     this.currentEvent = this.getEventById(eventId);
     this.currentEventSeenBefore = Boolean(this.seenEvents[eventId]);
+    this.currentEventPages = this.resolveEventPages(this.currentEvent);
+    this.currentEventPageIndex = 0;
     this.applyEventState(this.currentEvent);
     analytics.track("story_event_viewed", analytics.buildAnalyticsContext(this, {
       event_id: eventId,
@@ -1007,8 +1071,12 @@ class LoopScene extends Phaser.Scene {
       return "";
     }
 
-    const eventText = this.resolveEventText(this.currentEvent);
+    const eventText = this.currentEventPages[this.currentEventPageIndex] || "";
     if (!this.currentEvent.death) {
+      return eventText;
+    }
+
+    if (this.hasNextNarrativePage()) {
       return eventText;
     }
 
@@ -1042,6 +1110,36 @@ class LoopScene extends Phaser.Scene {
     return lines.join("\n");
   }
 
+  resolveEventPages(event) {
+    if (!event) {
+      return [""];
+    }
+
+    if (Array.isArray(event.pages) && event.pages.length) {
+      return event.pages.map((page) => {
+        if (typeof page === "function") {
+          return page(this);
+        }
+        return String(page);
+      });
+    }
+
+    return paginateNarrativeText(this.resolveEventText(event));
+  }
+
+  hasNextNarrativePage() {
+    return this.currentEventPageIndex < this.currentEventPages.length - 1;
+  }
+
+  advanceNarrativePage() {
+    if (this.isTyping || this.isTransitioning || !this.hasNextNarrativePage()) {
+      return;
+    }
+
+    this.currentEventPageIndex += 1;
+    this.refreshCurrentView(false, { suppressEventFeedback: true });
+  }
+
   refreshCurrentView(skipTyping = false, options = {}) {
     if (!this.currentEvent || !this.storyText) {
       return;
@@ -1049,14 +1147,28 @@ class LoopScene extends Phaser.Scene {
 
     const narrativeText = this.getCurrentNarrativeText();
     this.currentNarrativeText = narrativeText;
+
+    if (this.hasNextNarrativePage()) {
+      this.currentChoiceMode = "continue";
+    } else if (this.currentEvent.death) {
+      this.currentChoiceMode = "death";
+    } else {
+      this.currentChoiceMode = "choices";
+    }
+
     this.layoutScene(narrativeText);
     this.clearChoices();
     this.renderStats();
     this.animateNarrativeEntrance();
 
-    const onComplete = this.currentEvent.death
-      ? () => this.showDeathChoice()
-      : () => this.showChoices(this.currentEvent.choices);
+    let onComplete;
+    if (this.hasNextNarrativePage()) {
+      onComplete = () => this.showContinueChoice();
+    } else if (this.currentEvent.death) {
+      onComplete = () => this.showDeathChoice();
+    } else {
+      onComplete = () => this.showChoices(this.currentEvent.choices);
+    }
 
     this.setStoryText(narrativeText, skipTyping, onComplete);
     if (!options.suppressEventFeedback) {
@@ -1221,6 +1333,23 @@ class LoopScene extends Phaser.Scene {
       const gap = index > 0 ? CHOICE_GAP : 0;
       return height + node.cardHeight + gap;
     }, 0);
+    this.applyChoiceScroll();
+    this.animateChoicesEntrance();
+  }
+
+  showContinueChoice() {
+    const button = this.createChoiceCard({
+      y: 0,
+      title: "Continue to the next scene",
+      available: true,
+      actionLabel: "Follow up",
+      subtitle: "Read the next beat before the decision appears.",
+      onPress: () => this.advanceNarrativePage()
+    });
+
+    this.choiceContainer.add(button);
+    this.choiceNodes.push(button);
+    this.choiceContentHeight = button.cardHeight;
     this.applyChoiceScroll();
     this.animateChoicesEntrance();
   }
