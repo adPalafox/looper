@@ -1,0 +1,8 @@
+.DS_Store
+Thumbs.db
+
+# Local Netlify CLI state
+.netlify/
+
+# Local logs
+*.log
