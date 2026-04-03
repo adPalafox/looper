@@ -270,6 +270,10 @@ class LoopScene extends Phaser.Scene {
     this.initializeState();
   }
 
+  init() {
+    this.initializeState();
+  }
+
   preload() {}
 
   create() {
@@ -317,6 +321,7 @@ class LoopScene extends Phaser.Scene {
     this.currentLifeTraitUnlocks = [];
     this.currentLifeDiscoveries = [];
     this.revealedHiddenChoices = {};
+    this.isResetModalOpen = false;
   }
 
   bootstrapScene() {
@@ -451,6 +456,32 @@ class LoopScene extends Phaser.Scene {
       fontFamily: UI_FONT_STACK,
       color: "#9ea8bc"
     });
+
+    this.resetButton = this.add.container(0, 0);
+    this.resetButtonBg = this.add.rectangle(0, 0, 76, 30, 0x241b2a, 1).setOrigin(0.5);
+    this.resetButtonBg.setStrokeStyle(1, 0x6d576d, 0.95);
+    this.resetButtonLabel = this.createText(0, 0, "RESET", {
+      fontFamily: UI_FONT_STACK,
+      fontSize: "12px",
+      fontStyle: "bold",
+      color: "#f2d9d9"
+    }).setOrigin(0.5);
+    this.resetButtonLabel.setLetterSpacing(1);
+    this.resetButtonHitArea = this.add.zone(0, 0, 86, 36).setOrigin(0.5);
+    this.resetButtonHitArea.setInteractive({ useHandCursor: true });
+    this.resetButtonHitArea.on("pointerover", () => {
+      this.resetButtonBg.setFillStyle(0x312235, 1);
+      this.resetButtonBg.setStrokeStyle(1, 0xb38686, 1);
+    });
+    this.resetButtonHitArea.on("pointerout", () => {
+      this.resetButtonBg.setFillStyle(0x241b2a, 1);
+      this.resetButtonBg.setStrokeStyle(1, 0x6d576d, 0.95);
+    });
+    this.resetButtonHitArea.on("pointerdown", () => {
+      this.showResetConfirmation();
+    });
+    this.resetButton.add([this.resetButtonBg, this.resetButtonLabel, this.resetButtonHitArea]);
+    this.resetButton.setDepth(30);
   }
 
   createStoryObjects() {
@@ -502,6 +533,64 @@ class LoopScene extends Phaser.Scene {
 
     this.statEchoLayer = this.add.container(0, 0);
     this.statEchoLayer.setDepth(65);
+
+    this.createResetModal();
+  }
+
+  createResetModal() {
+    this.resetModalVeil = this.add.rectangle(0, 0, 10, 10, 0x09070d, 0.72).setOrigin(0, 0);
+    this.resetModalVeil.setDepth(90);
+    this.resetModalVeil.setVisible(false);
+    this.resetModalVeil.setInteractive();
+
+    this.resetModalPanel = this.add.rectangle(0, 0, 100, 100, 0x17131f, 0.98).setOrigin(0.5);
+    this.resetModalPanel.setStrokeStyle(1, 0xffffff, 0.08);
+    this.resetModalPanel.setDepth(91);
+    this.resetModalPanel.setVisible(false);
+
+    this.resetModalTitle = this.createText(0, 0, "Start over?", {
+      fontFamily: UI_FONT_STACK,
+      fontSize: "20px",
+      fontStyle: "bold",
+      color: "#f4ecda",
+      align: "center"
+    }).setOrigin(0.5);
+    this.resetModalTitle.setDepth(92);
+    this.resetModalTitle.setVisible(false);
+
+    this.resetModalBody = this.createText(0, 0, "This clears your saved lives, traits, flags, and progress on this device.", {
+      fontFamily: UI_FONT_STACK,
+      fontSize: "14px",
+      color: "#c8cfdf",
+      align: "center",
+      wordWrap: { width: 240, useAdvancedWrap: true }
+    }).setOrigin(0.5);
+    this.resetModalBody.setDepth(92);
+    this.resetModalBody.setVisible(false);
+
+    this.resetCancelButton = this.createModalButton("Cancel", 0x272331, 0x7e738f, () => this.hideResetConfirmation());
+    this.resetConfirmButton = this.createModalButton("Reset Save", 0x43252c, 0xc48b8b, () => this.resetProgress());
+  }
+
+  createModalButton(label, fillColor, strokeColor, onPress) {
+    const container = this.add.container(0, 0);
+    container.setDepth(92);
+    container.setVisible(false);
+
+    const background = this.add.rectangle(0, 0, 120, 38, fillColor, 1).setOrigin(0.5);
+    background.setStrokeStyle(1, strokeColor, 1);
+    const text = this.createText(0, 0, label, {
+      fontFamily: UI_FONT_STACK,
+      fontSize: "13px",
+      fontStyle: "bold",
+      color: "#f7f1e6"
+    }).setOrigin(0.5);
+    const hitArea = this.add.zone(0, 0, 120, 38).setOrigin(0.5);
+    hitArea.setInteractive({ useHandCursor: true });
+    hitArea.on("pointerdown", onPress);
+
+    container.add([background, text, hitArea]);
+    return container;
   }
 
   createAmbientTweens() {
@@ -524,6 +613,10 @@ class LoopScene extends Phaser.Scene {
   }
 
   handleChoiceWheel(pointer, gameObjects, deltaX, deltaY) {
+    if (this.isResetModalOpen) {
+      return;
+    }
+
     if (!this.canScrollChoices() || !this.isPointInChoiceViewport(pointer.x, pointer.y)) {
       return;
     }
@@ -532,6 +625,10 @@ class LoopScene extends Phaser.Scene {
   }
 
   handleChoicePointerDown(pointer) {
+    if (this.isResetModalOpen) {
+      return;
+    }
+
     if (this.isTyping) {
       this.revealStoryText();
       return;
@@ -548,6 +645,10 @@ class LoopScene extends Phaser.Scene {
   }
 
   handleChoicePointerMove(pointer) {
+    if (this.isResetModalOpen) {
+      return;
+    }
+
     if (!this.isTrackedChoicePointer(pointer)) {
       return;
     }
@@ -767,7 +868,9 @@ class LoopScene extends Phaser.Scene {
     this.traitText.setPosition(this.round(marginX + panelPadding), this.round(safeTop + 24 + headerFont * 1.35 + metaFont));
     this.traitText.setFontSize(traitFont);
     this.traitText.setColor("#98a3b7");
-    this.traitText.setWordWrapWidth(storyWidth, true);
+    this.traitText.setWordWrapWidth(Math.max(140, storyWidth - 96), true);
+
+    this.resetButton.setPosition(this.round(width - marginX - panelPadding - 22), this.round(safeTop + 24));
   }
 
   layoutStoryPanel() {
@@ -818,6 +921,25 @@ class LoopScene extends Phaser.Scene {
     this.transitionVeil.setSize(width, height);
     this.transitionVeil.setPosition(0, 0);
     this.statusBanner.setPosition(this.round(width / 2), this.round(Math.max(88, panelTop - 26)));
+    this.layoutResetModal();
+  }
+
+  layoutResetModal() {
+    const { width, height, panelWidth } = this.ui;
+    const modalWidth = Math.min(panelWidth, 320);
+    const modalHeight = 192;
+
+    this.resetModalVeil.setSize(width, height);
+    this.resetModalVeil.setPosition(0, 0);
+    this.resetModalPanel.setPosition(this.round(width / 2), this.round(height / 2));
+    this.resetModalPanel.setSize(modalWidth, modalHeight);
+
+    this.resetModalTitle.setPosition(this.round(width / 2), this.round(height / 2 - 48));
+    this.resetModalBody.setPosition(this.round(width / 2), this.round(height / 2 - 6));
+    this.resetModalBody.setWordWrapWidth(modalWidth - 44, true);
+
+    this.resetCancelButton.setPosition(this.round(width / 2 - 72), this.round(height / 2 + 58));
+    this.resetConfirmButton.setPosition(this.round(width / 2 + 72), this.round(height / 2 + 58));
   }
 
   beginLife() {
@@ -831,6 +953,37 @@ class LoopScene extends Phaser.Scene {
       starting_stats: { ...this.currentStats }
     }));
     this.showEvent("start");
+  }
+
+  showResetConfirmation() {
+    this.isResetModalOpen = true;
+    this.resetChoicePointerState();
+    this.setResetModalVisibility(true);
+  }
+
+  hideResetConfirmation() {
+    this.isResetModalOpen = false;
+    this.setResetModalVisibility(false);
+  }
+
+  setResetModalVisibility(isVisible) {
+    this.resetModalVeil.setVisible(isVisible);
+    this.resetModalPanel.setVisible(isVisible);
+    this.resetModalTitle.setVisible(isVisible);
+    this.resetModalBody.setVisible(isVisible);
+    this.resetCancelButton.setVisible(isVisible);
+    this.resetConfirmButton.setVisible(isVisible);
+  }
+
+  resetProgress() {
+    localStorage.removeItem(STORAGE_KEY);
+    analytics.track("save_reset_confirmed", {
+      previous_life_number: this.lifeNumber,
+      previous_traits_count: Object.keys(this.traits).length,
+      previous_true_ending: this.endingState.trueEndingUnlocked
+    });
+    this.hideResetConfirmation();
+    this.scene.restart();
   }
 
   showEvent(eventId, options = {}) {
