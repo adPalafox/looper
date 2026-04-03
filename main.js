@@ -30,6 +30,17 @@ const FEEDBACK_COLORS = Object.freeze({
   rebirth: 0xd9c596
 });
 
+const IMPORTANT_ANALYTICS_FLAGS = Object.freeze([
+  "died_in_forest",
+  "met_mysterious_girl",
+  "heard_perfect_timeline",
+  "found_memory_pearl",
+  "earned_true_ending"
+]);
+
+const SESSION_ANALYTICS_KEY = "rekindled-loop-analytics-session";
+const POSTHOG_PRODUCTION_HOSTNAME = "rekindled-loop.netlify.app";
+
 const SOUL_TRAITS = Object.freeze({
   survivor: {
     label: "Survivor",
@@ -66,7 +77,19 @@ const IMPORTANT_FLAG_TEXT = Object.freeze({
   earned_true_ending: "You discovered the true ending."
 });
 
-function getAdaptiveTextResolution(width = window.innerWidth, devicePixelRatio = window.devicePixelRatio || 1) {
+function getAdaptiveTextResolution(width = window.innerWidth, devicePixelRatio = window.devicePixelRatio || 1, role = "ui") {
+  if (role === "story") {
+    if (width <= 480) {
+      return 1;
+    }
+
+    if (width <= 768) {
+      return 1.1;
+    }
+
+    return Math.min(1.5, Math.max(1.2, devicePixelRatio));
+  }
+
   if (width <= 480) {
     return 1;
   }
@@ -78,9 +101,176 @@ function getAdaptiveTextResolution(width = window.innerWidth, devicePixelRatio =
   return Math.min(2, Math.max(1.25, devicePixelRatio));
 }
 
+function getPosthogConfig() {
+  return window.POSTHOG_CONFIG || {};
+}
+
+function isProductionAnalyticsEnabled() {
+  const config = getPosthogConfig();
+  const enabledHostnames = config.enabledHostnames || [POSTHOG_PRODUCTION_HOSTNAME];
+  return Boolean(config.apiKey) && enabledHostnames.includes(window.location.hostname);
+}
+
+function getSessionDistinctId() {
+  const existing = window.sessionStorage.getItem(SESSION_ANALYTICS_KEY);
+  if (existing) {
+    return existing;
+  }
+
+  const generated = `rl_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+  window.sessionStorage.setItem(SESSION_ANALYTICS_KEY, generated);
+  return generated;
+}
+
+function initializePostHog() {
+  if (!isProductionAnalyticsEnabled() || window.posthog || window.__posthogLoading) {
+    return;
+  }
+
+  const config = getPosthogConfig();
+  window.__posthogLoading = true;
+
+  const script = document.createElement("script");
+  script.async = true;
+  script.src = `${config.apiHost || "https://us.i.posthog.com"}/static/array.js`;
+  script.onload = () => {
+    window.__posthogLoading = false;
+    if (!window.posthog?.init) {
+      return;
+    }
+
+    window.posthog.init(config.apiKey, {
+      api_host: config.apiHost || "https://us.i.posthog.com",
+      ui_host: config.uiHost || "https://us.posthog.com",
+      autocapture: !config.disableAutocapture,
+      capture_pageview: false,
+      capture_pageleave: true,
+      person_profiles: "never",
+      disable_session_recording: false,
+      session_recording: {
+        maskAllInputs: true,
+        maskInputOptions: { password: true },
+        sampleRate: config.sessionRecordingSampleRate || 0.15
+      },
+      surveys: config.enableSurveys !== false,
+      loaded: (posthog) => {
+        posthog.register({ session_distinct_id: getSessionDistinctId() });
+        analytics.flush();
+      }
+    });
+  };
+  script.onerror = () => {
+    window.__posthogLoading = false;
+  };
+
+  document.head.appendChild(script);
+}
+
+const analytics = {
+  initialized: false,
+  pendingEvents: [],
+
+  init() {
+    if (this.initialized) {
+      return;
+    }
+
+    this.initialized = true;
+    initializePostHog();
+  },
+
+  isEnabled() {
+    return Boolean(window.posthog?.capture) && isProductionAnalyticsEnabled();
+  },
+
+  track(name, props = {}) {
+    if (!isProductionAnalyticsEnabled()) {
+      return;
+    }
+
+    if (!window.posthog?.capture) {
+      this.pendingEvents.push({ name, props });
+      return;
+    }
+
+    window.posthog.capture(name, {
+      session_distinct_id: getSessionDistinctId(),
+      ...props
+    });
+  },
+
+  flush() {
+    if (!this.isEnabled() || !this.pendingEvents.length) {
+      return;
+    }
+
+    const queued = [...this.pendingEvents];
+    this.pendingEvents = [];
+    queued.forEach(({ name, props }) => this.track(name, props));
+  },
+
+  buildAnalyticsContext(scene, extra = {}) {
+    return {
+      event_id: scene.currentEvent?.id || null,
+      life_number: scene.lifeNumber,
+      current_stats: { ...scene.currentStats },
+      base_stats: { ...scene.baseStats },
+      traits_count: Object.keys(scene.traits).length,
+      trait_ids: Object.keys(scene.traits).sort(),
+      flags_count: Object.keys(scene.flags).length,
+      seen_before: scene.currentEventSeenBefore,
+      is_mobile: window.matchMedia("(max-width: 768px)").matches,
+      viewport_width: Math.round(window.innerWidth),
+      ...extra
+    };
+  }
+};
+
+function slugifyAnalyticsLabel(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 60);
+}
+
+function getChoiceAnalyticsId(eventId, choice) {
+  if (choice.analyticsId) {
+    return choice.analyticsId;
+  }
+
+  return `${eventId || "unknown"}__${slugifyAnalyticsLabel(choice.text || choice.next || "choice")}`;
+}
+
+function getChoiceCategory(choice) {
+  const source = `${choice.text || ""} ${choice.next || ""}`.toLowerCase();
+
+  if (source.includes("forest") || source.includes("fight") || source.includes("duel") || source.includes("strike")) {
+    return "combat";
+  }
+
+  if (source.includes("shrine") || source.includes("crypt") || source.includes("memory") || source.includes("mural")) {
+    return "mystery";
+  }
+
+  if (source.includes("speech") || source.includes("talk") || source.includes("charm") || source.includes("peace")) {
+    return "social";
+  }
+
+  if (source.includes("run") || source.includes("hide") || source.includes("escape")) {
+    return "escape";
+  }
+
+  return "progression";
+}
+
 class LoopScene extends Phaser.Scene {
   constructor() {
     super({ key: "LoopScene" });
+    this.initializeState();
+  }
+
+  init() {
     this.initializeState();
   }
 
@@ -130,15 +320,24 @@ class LoopScene extends Phaser.Scene {
     this.runFlags = {};
     this.currentLifeTraitUnlocks = [];
     this.currentLifeDiscoveries = [];
+    this.revealedHiddenChoices = {};
+    this.isResetModalOpen = false;
   }
 
   bootstrapScene() {
     this.loadingText.destroy();
     this.loadProgress();
+    analytics.init();
     this.createObjects();
     this.bindInput();
     this.scale.on("resize", this.handleResize, this);
     this.handleResize(this.scale.gameSize);
+    analytics.track("game_loaded", {
+      is_returning_player: this.lifeNumber > 1 || Object.keys(this.seenEvents).length > 0,
+      saved_life_number: this.lifeNumber,
+      saved_traits_count: Object.keys(this.traits).length,
+      saved_true_ending: this.endingState.trueEndingUnlocked
+    });
     this.beginLife();
   }
 
@@ -257,6 +456,32 @@ class LoopScene extends Phaser.Scene {
       fontFamily: UI_FONT_STACK,
       color: "#9ea8bc"
     });
+
+    this.resetButton = this.add.container(0, 0);
+    this.resetButtonBg = this.add.rectangle(0, 0, 76, 30, 0x241b2a, 1).setOrigin(0.5);
+    this.resetButtonBg.setStrokeStyle(1, 0x6d576d, 0.95);
+    this.resetButtonLabel = this.createText(0, 0, "RESET", {
+      fontFamily: UI_FONT_STACK,
+      fontSize: "12px",
+      fontStyle: "bold",
+      color: "#f2d9d9"
+    }).setOrigin(0.5);
+    this.resetButtonLabel.setLetterSpacing(1);
+    this.resetButtonHitArea = this.add.zone(0, 0, 86, 36).setOrigin(0.5);
+    this.resetButtonHitArea.setInteractive({ useHandCursor: true });
+    this.resetButtonHitArea.on("pointerover", () => {
+      this.resetButtonBg.setFillStyle(0x312235, 1);
+      this.resetButtonBg.setStrokeStyle(1, 0xb38686, 1);
+    });
+    this.resetButtonHitArea.on("pointerout", () => {
+      this.resetButtonBg.setFillStyle(0x241b2a, 1);
+      this.resetButtonBg.setStrokeStyle(1, 0x6d576d, 0.95);
+    });
+    this.resetButtonHitArea.on("pointerdown", () => {
+      this.showResetConfirmation();
+    });
+    this.resetButton.add([this.resetButtonBg, this.resetButtonLabel, this.resetButtonHitArea]);
+    this.resetButton.setDepth(30);
   }
 
   createStoryObjects() {
@@ -270,8 +495,9 @@ class LoopScene extends Phaser.Scene {
       fontFamily: STORY_FONT_STACK,
       color: "#f7f3ea",
       lineSpacing: 8
-    });
+    }, "story");
     this.storyText.setDepth(22);
+    this.storyText.setStroke("#120f18", 1);
   }
 
   createChoiceObjects() {
@@ -307,6 +533,64 @@ class LoopScene extends Phaser.Scene {
 
     this.statEchoLayer = this.add.container(0, 0);
     this.statEchoLayer.setDepth(65);
+
+    this.createResetModal();
+  }
+
+  createResetModal() {
+    this.resetModalVeil = this.add.rectangle(0, 0, 10, 10, 0x09070d, 0.72).setOrigin(0, 0);
+    this.resetModalVeil.setDepth(90);
+    this.resetModalVeil.setVisible(false);
+    this.resetModalVeil.setInteractive();
+
+    this.resetModalPanel = this.add.rectangle(0, 0, 100, 100, 0x17131f, 0.98).setOrigin(0.5);
+    this.resetModalPanel.setStrokeStyle(1, 0xffffff, 0.08);
+    this.resetModalPanel.setDepth(91);
+    this.resetModalPanel.setVisible(false);
+
+    this.resetModalTitle = this.createText(0, 0, "Start over?", {
+      fontFamily: UI_FONT_STACK,
+      fontSize: "20px",
+      fontStyle: "bold",
+      color: "#f4ecda",
+      align: "center"
+    }).setOrigin(0.5);
+    this.resetModalTitle.setDepth(92);
+    this.resetModalTitle.setVisible(false);
+
+    this.resetModalBody = this.createText(0, 0, "This clears your saved lives, traits, flags, and progress on this device.", {
+      fontFamily: UI_FONT_STACK,
+      fontSize: "14px",
+      color: "#c8cfdf",
+      align: "center",
+      wordWrap: { width: 240, useAdvancedWrap: true }
+    }).setOrigin(0.5);
+    this.resetModalBody.setDepth(92);
+    this.resetModalBody.setVisible(false);
+
+    this.resetCancelButton = this.createModalButton("Cancel", 0x272331, 0x7e738f, () => this.hideResetConfirmation());
+    this.resetConfirmButton = this.createModalButton("Reset Save", 0x43252c, 0xc48b8b, () => this.resetProgress());
+  }
+
+  createModalButton(label, fillColor, strokeColor, onPress) {
+    const container = this.add.container(0, 0);
+    container.setDepth(92);
+    container.setVisible(false);
+
+    const background = this.add.rectangle(0, 0, 120, 38, fillColor, 1).setOrigin(0.5);
+    background.setStrokeStyle(1, strokeColor, 1);
+    const text = this.createText(0, 0, label, {
+      fontFamily: UI_FONT_STACK,
+      fontSize: "13px",
+      fontStyle: "bold",
+      color: "#f7f1e6"
+    }).setOrigin(0.5);
+    const hitArea = this.add.zone(0, 0, 120, 38).setOrigin(0.5);
+    hitArea.setInteractive({ useHandCursor: true });
+    hitArea.on("pointerdown", onPress);
+
+    container.add([background, text, hitArea]);
+    return container;
   }
 
   createAmbientTweens() {
@@ -329,6 +613,10 @@ class LoopScene extends Phaser.Scene {
   }
 
   handleChoiceWheel(pointer, gameObjects, deltaX, deltaY) {
+    if (this.isResetModalOpen) {
+      return;
+    }
+
     if (!this.canScrollChoices() || !this.isPointInChoiceViewport(pointer.x, pointer.y)) {
       return;
     }
@@ -337,6 +625,10 @@ class LoopScene extends Phaser.Scene {
   }
 
   handleChoicePointerDown(pointer) {
+    if (this.isResetModalOpen) {
+      return;
+    }
+
     if (this.isTyping) {
       this.revealStoryText();
       return;
@@ -353,6 +645,10 @@ class LoopScene extends Phaser.Scene {
   }
 
   handleChoicePointerMove(pointer) {
+    if (this.isResetModalOpen) {
+      return;
+    }
+
     if (!this.isTrackedChoicePointer(pointer)) {
       return;
     }
@@ -572,7 +868,9 @@ class LoopScene extends Phaser.Scene {
     this.traitText.setPosition(this.round(marginX + panelPadding), this.round(safeTop + 24 + headerFont * 1.35 + metaFont));
     this.traitText.setFontSize(traitFont);
     this.traitText.setColor("#98a3b7");
-    this.traitText.setWordWrapWidth(storyWidth, true);
+    this.traitText.setWordWrapWidth(Math.max(140, storyWidth - 96), true);
+
+    this.resetButton.setPosition(this.round(width - marginX - panelPadding - 22), this.round(safeTop + 24));
   }
 
   layoutStoryPanel() {
@@ -623,20 +921,80 @@ class LoopScene extends Phaser.Scene {
     this.transitionVeil.setSize(width, height);
     this.transitionVeil.setPosition(0, 0);
     this.statusBanner.setPosition(this.round(width / 2), this.round(Math.max(88, panelTop - 26)));
+    this.layoutResetModal();
+  }
+
+  layoutResetModal() {
+    const { width, height, panelWidth } = this.ui;
+    const modalWidth = Math.min(panelWidth, 320);
+    const modalHeight = 192;
+
+    this.resetModalVeil.setSize(width, height);
+    this.resetModalVeil.setPosition(0, 0);
+    this.resetModalPanel.setPosition(this.round(width / 2), this.round(height / 2));
+    this.resetModalPanel.setSize(modalWidth, modalHeight);
+
+    this.resetModalTitle.setPosition(this.round(width / 2), this.round(height / 2 - 48));
+    this.resetModalBody.setPosition(this.round(width / 2), this.round(height / 2 - 6));
+    this.resetModalBody.setWordWrapWidth(modalWidth - 44, true);
+
+    this.resetCancelButton.setPosition(this.round(width / 2 - 72), this.round(height / 2 + 58));
+    this.resetConfirmButton.setPosition(this.round(width / 2 + 72), this.round(height / 2 + 58));
   }
 
   beginLife() {
     this.runFlags = {};
     this.currentLifeTraitUnlocks = [];
     this.currentLifeDiscoveries = [];
+    this.revealedHiddenChoices = {};
     this.currentStats = this.applyEffects(this.baseStats, this.getTraitBonuses());
+    analytics.track("life_started", analytics.buildAnalyticsContext(this, {
+      trait_bonus_stats: this.getTraitBonuses(),
+      starting_stats: { ...this.currentStats }
+    }));
     this.showEvent("start");
+  }
+
+  showResetConfirmation() {
+    this.isResetModalOpen = true;
+    this.resetChoicePointerState();
+    this.setResetModalVisibility(true);
+  }
+
+  hideResetConfirmation() {
+    this.isResetModalOpen = false;
+    this.setResetModalVisibility(false);
+  }
+
+  setResetModalVisibility(isVisible) {
+    this.resetModalVeil.setVisible(isVisible);
+    this.resetModalPanel.setVisible(isVisible);
+    this.resetModalTitle.setVisible(isVisible);
+    this.resetModalBody.setVisible(isVisible);
+    this.resetCancelButton.setVisible(isVisible);
+    this.resetConfirmButton.setVisible(isVisible);
+  }
+
+  resetProgress() {
+    localStorage.removeItem(STORAGE_KEY);
+    analytics.track("save_reset_confirmed", {
+      previous_life_number: this.lifeNumber,
+      previous_traits_count: Object.keys(this.traits).length,
+      previous_true_ending: this.endingState.trueEndingUnlocked
+    });
+    this.hideResetConfirmation();
+    this.scene.restart();
   }
 
   showEvent(eventId, options = {}) {
     this.currentEvent = this.getEventById(eventId);
     this.currentEventSeenBefore = Boolean(this.seenEvents[eventId]);
     this.applyEventState(this.currentEvent);
+    analytics.track("story_event_viewed", analytics.buildAnalyticsContext(this, {
+      event_id: eventId,
+      is_death_event: Boolean(this.currentEvent.death),
+      is_true_ending: Boolean(this.currentEvent.trueEnding)
+    }));
     this.refreshCurrentView(false, options);
   }
 
@@ -753,6 +1111,7 @@ class LoopScene extends Phaser.Scene {
       return;
     }
 
+    analytics.track("story_text_skipped", analytics.buildAnalyticsContext(this));
     this.stopTyping();
     this.completeStoryText(this.currentNarrativeText);
   }
@@ -791,11 +1150,25 @@ class LoopScene extends Phaser.Scene {
 
   showChoices(choices) {
     let offsetY = 0;
+    let availableCount = 0;
+    let lockedCount = 0;
+    let hiddenAvailableCount = 0;
 
     choices.forEach((choice) => {
       const available = this.canChoose(choice);
       if (choice.hiddenWhenLocked && !available) {
         return;
+      }
+
+       if (available) {
+        availableCount += 1;
+      } else {
+        lockedCount += 1;
+      }
+
+      if (choice.hiddenWhenLocked && available) {
+        hiddenAvailableCount += 1;
+        this.trackHiddenPathReveal(choice);
       }
 
       const button = this.createChoiceCard({
@@ -815,6 +1188,12 @@ class LoopScene extends Phaser.Scene {
     this.choiceContentHeight = Math.max(0, offsetY - CHOICE_GAP);
     this.applyChoiceScroll();
     this.animateChoicesEntrance();
+    analytics.track("choice_list_viewed", analytics.buildAnalyticsContext(this, {
+      choices_total: this.choiceNodes.length,
+      choices_available: availableCount,
+      choices_locked: lockedCount,
+      hidden_choices_available: hiddenAvailableCount
+    }));
   }
 
   showDeathChoice() {
@@ -831,9 +1210,55 @@ class LoopScene extends Phaser.Scene {
 
     this.choiceContainer.add(button);
     this.choiceNodes.push(button);
-    this.choiceContentHeight = button.cardHeight;
+
+    const feedbackButton = this.createFeedbackChoice(button.cardHeight + CHOICE_GAP);
+    if (feedbackButton) {
+      this.choiceContainer.add(feedbackButton);
+      this.choiceNodes.push(feedbackButton);
+    }
+
+    this.choiceContentHeight = this.choiceNodes.reduce((height, node, index) => {
+      const gap = index > 0 ? CHOICE_GAP : 0;
+      return height + node.cardHeight + gap;
+    }, 0);
     this.applyChoiceScroll();
     this.animateChoicesEntrance();
+  }
+
+  createFeedbackChoice(offsetY) {
+    const feedbackUrl = getPosthogConfig().feedbackUrl;
+    if (!feedbackUrl) {
+      return null;
+    }
+
+    return this.createChoiceCard({
+      y: offsetY,
+      title: this.currentEvent?.trueEnding ? "Share feedback about the ending" : "Send quick feedback",
+      available: true,
+      actionLabel: "Open",
+      subtitle: "Tell me where the run felt confusing, slow, or memorable.",
+      onPress: () => {
+        analytics.track("feedback_link_opened", analytics.buildAnalyticsContext(this, {
+          target: feedbackUrl,
+          is_true_ending: Boolean(this.currentEvent?.trueEnding)
+        }));
+        window.open(feedbackUrl, "_blank", "noopener,noreferrer");
+      }
+    });
+  }
+
+  trackHiddenPathReveal(choice) {
+    const choiceId = getChoiceAnalyticsId(this.currentEvent?.id, choice);
+    if (this.revealedHiddenChoices[choiceId]) {
+      return;
+    }
+
+    this.revealedHiddenChoices[choiceId] = true;
+    analytics.track("hidden_path_revealed", analytics.buildAnalyticsContext(this, {
+      choice_id: choiceId,
+      next_event_id: choice.next,
+      unlock_source: "requirements_met"
+    }));
   }
 
   getChoiceLabel(choice, available) {
@@ -1085,6 +1510,19 @@ class LoopScene extends Phaser.Scene {
     const statDelta = this.getStatDelta(previousStats, nextStats);
 
     this.currentStats = nextStats;
+    analytics.track("choice_selected", analytics.buildAnalyticsContext(this, {
+      choice_id: getChoiceAnalyticsId(this.currentEvent?.id, choice),
+      choice_text: choice.text,
+      next_event_id: choice.next,
+      choice_category: getChoiceCategory(choice),
+      is_hidden_path: Boolean(choice.hiddenWhenLocked)
+    }));
+    if (choice.hiddenWhenLocked) {
+      analytics.track("hidden_path_taken", analytics.buildAnalyticsContext(this, {
+        choice_id: getChoiceAnalyticsId(this.currentEvent?.id, choice),
+        next_event_id: choice.next
+      }));
+    }
     this.applyPersistentFlags(choice.setFlags);
     this.applyRunFlags(choice.setRunFlags);
     this.unlockTraits(choice.unlockTraits);
@@ -1157,6 +1595,9 @@ class LoopScene extends Phaser.Scene {
       if (!this.endingState.trueEndingLife) {
         this.endingState.trueEndingLife = this.lifeNumber;
       }
+      analytics.track("true_ending_reached", analytics.buildAnalyticsContext(this, {
+        seen_events_count: Object.keys(this.seenEvents).length
+      }));
       this.saveProgress();
     }
   }
@@ -1180,6 +1621,13 @@ class LoopScene extends Phaser.Scene {
         const discoveryText = IMPORTANT_FLAG_TEXT[flagId];
         if (discoveryText && !this.currentLifeDiscoveries.includes(discoveryText)) {
           this.currentLifeDiscoveries.push(discoveryText);
+        }
+
+        if (IMPORTANT_ANALYTICS_FLAGS.includes(flagId)) {
+          analytics.track("world_flag_unlocked", analytics.buildAnalyticsContext(this, {
+            flag_id: flagId,
+            source_event_id: this.currentEvent?.id || null
+          }));
         }
       }
     });
@@ -1219,6 +1667,11 @@ class LoopScene extends Phaser.Scene {
       if (!this.currentLifeTraitUnlocks.includes(traitId)) {
         this.currentLifeTraitUnlocks.push(traitId);
       }
+
+      analytics.track("trait_unlocked", analytics.buildAnalyticsContext(this, {
+        trait_id: traitId,
+        source_event_id: this.currentEvent?.id || null
+      }));
     });
 
     if (changed) {
@@ -1295,7 +1748,13 @@ class LoopScene extends Phaser.Scene {
   }
 
   reincarnate() {
-    this.baseStats = this.calculateCarryOver(this.currentStats);
+    const nextBaseStats = this.calculateCarryOver(this.currentStats);
+    analytics.track("life_reincarnated", analytics.buildAnalyticsContext(this, {
+      from_life_number: this.lifeNumber,
+      to_life_number: this.lifeNumber + 1,
+      next_base_stats: nextBaseStats
+    }));
+    this.baseStats = nextBaseStats;
     this.lifeNumber += 1;
     this.saveProgress();
     this.playReincarnationFeedback(() => this.beginLife());
@@ -1344,20 +1803,21 @@ class LoopScene extends Phaser.Scene {
     };
   }
 
-  createText(x, y, value, style) {
+  createText(x, y, value, style, role = "ui") {
     const text = this.add.text(x, y, value, style);
-    text.setResolution(getAdaptiveTextResolution(this.scale.gameSize.width));
+    text.textRole = role;
+    text.setResolution(getAdaptiveTextResolution(this.scale.gameSize.width, window.devicePixelRatio || 1, role));
     this.textNodes.push(text);
     return text;
   }
 
   updateTextResolution(width) {
-    const resolution = getAdaptiveTextResolution(width);
     this.textNodes.forEach((text) => {
       if (!text || !text.scene) {
         return;
       }
 
+      const resolution = getAdaptiveTextResolution(width, window.devicePixelRatio || 1, text.textRole || "ui");
       text.setResolution(resolution);
       text.updateText();
     });
@@ -1457,6 +1917,14 @@ class LoopScene extends Phaser.Scene {
     if (!event?.death) {
       return;
     }
+
+    analytics.track("death_reached", analytics.buildAnalyticsContext(this, {
+      death_label: event.deathLabel,
+      final_stats: { ...this.currentStats },
+      next_base_stats: this.calculateCarryOver(this.currentStats),
+      trait_unlocks_this_life: [...this.currentLifeTraitUnlocks],
+      discoveries_this_life: [...this.currentLifeDiscoveries]
+    }));
 
     this.pulseHeroHalo(FEEDBACK_COLORS.death, 0.24);
     this.pulsePanelGlow(FEEDBACK_COLORS.death, 0.14);
