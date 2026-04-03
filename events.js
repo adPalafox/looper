@@ -171,10 +171,10 @@ const EVENTS = [
         next: "sage_death"
       },
       {
-        text: "Map the tunnels and leave (+1 Intellect)",
+        text: "Map the tunnels, escape alive, and live by that knowledge (+1 Intellect)",
         effects: { intellect: 1 },
         setFlags: { heard_perfect_timeline: true },
-        next: "crossroads"
+        next: "peace_death"
       },
       { text: "Touch the cursed sarcophagus", effects: {}, next: "curse_death" }
     ]
@@ -281,3 +281,7 @@ const EVENTS = [
     setFlags: { earned_true_ending: true }
   }
 ];
+
+if (typeof module !== "undefined") {
+  module.exports = { EVENTS };
+}
