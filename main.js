@@ -732,7 +732,6 @@ class LoopScene extends Phaser.Scene {
     const marginX = Phaser.Math.Clamp(width * 0.055, 18, 32);
     const safeTop = Phaser.Math.Clamp(height * 0.04, 20, 38);
     const safeBottom = Phaser.Math.Clamp(height * 0.025, 16, 28);
-    const headerHeight = Phaser.Math.Clamp(height * 0.115, 84, 122);
     const panelWidth = width - marginX * 2;
     const panelPadding = Phaser.Math.Clamp(panelWidth * 0.065, 20, 30);
     const labelFont = Phaser.Math.Clamp(width * 0.03, 11, 13);
@@ -744,17 +743,7 @@ class LoopScene extends Phaser.Scene {
     const choiceMetaFont = Phaser.Math.Clamp(width * 0.031, 12, 13);
     const storyWidth = panelWidth - panelPadding * 2;
     const minStoryHeight = Phaser.Math.Clamp(height * 0.14, 108, 170);
-    const minChoicesHeight = Phaser.Math.Clamp(height * 0.22, 150, 240);
     const panelChromeHeight = 64;
-    const topReserved = safeTop + headerHeight + 18;
-    const maxPanelHeight = Math.max(
-      minStoryHeight + minChoicesHeight + panelPadding * 2 + panelChromeHeight,
-      height - safeBottom - topReserved
-    );
-    const minPanelHeight = Math.min(
-      maxPanelHeight,
-      Math.max(350, minStoryHeight + minChoicesHeight + panelPadding * 2 + panelChromeHeight)
-    );
 
     return {
       width,
@@ -762,7 +751,6 @@ class LoopScene extends Phaser.Scene {
       marginX,
       safeTop,
       safeBottom,
-      headerHeight,
       panelWidth,
       panelPadding,
       labelFont,
@@ -774,10 +762,7 @@ class LoopScene extends Phaser.Scene {
       choiceMetaFont,
       storyWidth,
       minStoryHeight,
-      minChoicesHeight,
       panelChromeHeight,
-      minPanelHeight,
-      maxPanelHeight,
       choicesX: marginX + panelPadding,
       choicesWidth: storyWidth,
       heroShadowWidth: Phaser.Math.Clamp(width * 0.34, 112, 190),
@@ -821,15 +806,34 @@ class LoopScene extends Phaser.Scene {
       height,
       safeTop,
       safeBottom,
-      headerHeight,
+      panelWidth,
       panelPadding,
+      headerFont,
+      metaFont,
+      traitFont,
       storyFont,
       storyWidth,
       minStoryHeight,
       panelChromeHeight,
-      maxPanelHeight,
       height: viewportHeight
     } = this.ui;
+
+    const headerHeight = this.measureHeaderHeight({
+      safeTop,
+      panelWidth,
+      panelPadding,
+      headerFont,
+      metaFont,
+      traitFont,
+      storyWidth
+    });
+
+    const minChoicesHeight = Phaser.Math.Clamp(height * 0.22, 150, 240);
+    const topReserved = safeTop + headerHeight + 18;
+    const maxPanelHeight = Math.max(
+      minStoryHeight + minChoicesHeight + panelPadding * 2 + panelChromeHeight,
+      height - safeBottom - topReserved
+    );
 
     this.storyText.setFontSize(storyFont);
     this.storyText.setLineSpacing(Math.round(storyFont * 0.36));
@@ -862,6 +866,7 @@ class LoopScene extends Phaser.Scene {
     return {
       panelHeight,
       panelTop,
+      headerHeight,
       storyHeight,
       choicesY,
       choicesHeight,
@@ -885,6 +890,26 @@ class LoopScene extends Phaser.Scene {
 
     const minChoicesHeight = Phaser.Math.Clamp(viewportHeight * 0.22, 150, 240);
     return Phaser.Math.Clamp(viewportHeight * 0.24, minChoicesHeight, 240);
+  }
+
+  measureHeaderHeight({ safeTop, panelWidth, panelPadding, headerFont, metaFont, traitFont, storyWidth }) {
+    const traitWrapWidth = Math.max(140, storyWidth - 96);
+
+    this.lifeText.setFontSize(headerFont);
+    this.statText.setFontSize(metaFont);
+    this.traitText.setFontSize(traitFont);
+    this.traitText.setWordWrapWidth(traitWrapWidth, true);
+    this.traitText.setFixedSize(0, 0);
+    this.traitText.setText(`Traits: ${this.getTraitSummaryText()}`);
+
+    const titleY = safeTop + 16;
+    const statsY = safeTop + 18 + headerFont * 1.35;
+    const traitsY = safeTop + 24 + headerFont * 1.35 + metaFont;
+    const traitsBottom = traitsY + Math.ceil(this.traitText.height);
+    const minimumHeight = Phaser.Math.Clamp(this.ui.height * 0.115, 84, 122);
+    const contentHeight = traitsBottom - safeTop + 16;
+
+    return Math.max(minimumHeight, contentHeight);
   }
 
   getPanelMinHeight(minStoryHeight, choiceAreaMinHeight, panelPadding, panelChromeHeight) {
